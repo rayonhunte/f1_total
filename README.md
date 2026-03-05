@@ -51,6 +51,14 @@ npm run functions:build
 firebase deploy --only functions,firestore:rules,hosting
 ```
 
+## GitHub Actions Deploy
+
+This repo includes `.github/workflows/deploy-main.yml` to auto-deploy on pushes to `main`.
+
+Required repository secret:
+
+- `FIREBASE_SERVICE_ACCOUNT_F1TOTAL_C37F3`: JSON key for a service account that can deploy Firebase Hosting, Functions, and Firestore rules for project `f1total-c37f3`.
+
 ## License
 
 This project is licensed under Apache-2.0. See [LICENSE](./LICENSE).
