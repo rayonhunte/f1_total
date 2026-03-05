@@ -59,6 +59,17 @@ Required repository secret:
 
 - `FIREBASE_SERVICE_ACCOUNT_F1TOTAL_C37F3`: JSON key for a service account that can deploy Firebase Hosting, Functions, and Firestore rules for project `f1total-c37f3`.
 
+Required repository variables:
+
+- `FIREBASE_PROJECT_ID`
+- `VITE_FIREBASE_API_KEY`
+- `VITE_FIREBASE_AUTH_DOMAIN`
+- `VITE_FIREBASE_PROJECT_ID`
+- `VITE_FIREBASE_STORAGE_BUCKET`
+- `VITE_FIREBASE_MESSAGING_SENDER_ID`
+- `VITE_FIREBASE_APP_ID`
+- `VITE_FIREBASE_MEASUREMENT_ID`
+
 ## License
 
 This project is licensed under Apache-2.0. See [LICENSE](./LICENSE).
