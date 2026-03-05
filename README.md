@@ -50,3 +50,15 @@ npm run functions:build
 ```bash
 firebase deploy --only functions,firestore:rules,hosting
 ```
+
+## License
+
+This project is licensed under Apache-2.0. See [LICENSE](./LICENSE).
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for contribution flow and ownership/attribution terms.
+
+## Security
+
+See [SECURITY.md](./SECURITY.md) for vulnerability reporting and secret-handling policy.
