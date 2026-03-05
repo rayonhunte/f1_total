@@ -17,14 +17,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
-      VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
-      VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN }}
-      VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
-      VITE_FIREBASE_STORAGE_BUCKET: ${{ vars.VITE_FIREBASE_STORAGE_BUCKET }}
-      VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID }}
-      VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID }}
-      VITE_FIREBASE_MEASUREMENT_ID: ${{ vars.VITE_FIREBASE_MEASUREMENT_ID }}
+      FIREBASE_PROJECT_ID: f1total-c37f3
 
     steps:
       - name: Checkout
@@ -41,26 +34,6 @@ jobs:
 
       - name: Install functions deps
         run: npm --prefix functions ci
-
-      - name: Validate CI env
-        run: |
-          required_vars=(
-            FIREBASE_PROJECT_ID
-            VITE_FIREBASE_API_KEY
-            VITE_FIREBASE_AUTH_DOMAIN
-            VITE_FIREBASE_PROJECT_ID
-            VITE_FIREBASE_STORAGE_BUCKET
-            VITE_FIREBASE_MESSAGING_SENDER_ID
-            VITE_FIREBASE_APP_ID
-            VITE_FIREBASE_MEASUREMENT_ID
-          )
-
-          for var_name in "${required_vars[@]}"; do
-            if [ -z "${!var_name}" ]; then
-              echo "Missing required Actions variable: ${var_name}"
-              exit 1
-            fi
-          done
 
       - name: Typecheck
         run: npm run typecheck
