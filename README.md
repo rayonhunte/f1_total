@@ -1,0 +1,52 @@
+# F1 Fantasy App
+
+Vite + React + TypeScript app with Firebase Auth/Firestore/Functions/Hosting.
+
+## Setup
+
+```bash
+npm install
+npm --prefix functions install
+cp .env.example .env
+npm run dev
+```
+
+## Checks
+
+```bash
+npm run lint
+npm run typecheck
+npm run build
+npm run functions:build
+```
+
+## Routes
+
+- `/login`: Google sign-in
+- `/groups`: create group, request to join by invite code, switch active group
+- `/`: dashboard (requires auth + approved group membership)
+- `/picks`: group-scoped picks
+- `/leaderboard`: group-scoped leaderboard
+- `/admin`: group admin/owner tools (invite link, approve requests, promote admins)
+
+## Group Access Model
+
+- Group creator becomes `owner` automatically.
+- Join requests are created as `pending` and require approval by `owner` or `admin`.
+- Only approved (`active`) members can access picks/leaderboard for a group.
+- Group owner can promote or demote members to/from group admin.
+
+## Multi-group Storage
+
+- Groups: `groups/{groupId}`
+- Memberships: `groups/{groupId}/members/{uid}`
+- Active group pointer: `users/{uid}.activeGroupId`
+- Picks: `picks/{seasonId}_{raceId}_{groupId}_{uid}`
+- Scores: `scores/{seasonId}_{groupId}_{uid}`
+- Leaderboards: `leaderboards/{seasonId}_{groupId}`
+
+## Deploy
+
+```bash
+firebase deploy --only functions,firestore:rules,hosting
+```

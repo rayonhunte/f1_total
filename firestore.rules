@@ -1,0 +1,184 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() && request.auth.token.role == 'admin';
+    }
+
+    function memberDoc(groupId) {
+      return get(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid));
+    }
+
+    function memberExists(groupId) {
+      return signedIn() && exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid));
+    }
+
+    function isGroupActiveMember(groupId) {
+      return memberExists(groupId) && memberDoc(groupId).data.status == 'active';
+    }
+
+    function isGroupAdmin(groupId) {
+      return isGroupActiveMember(groupId) &&
+        (memberDoc(groupId).data.role == 'owner' || memberDoc(groupId).data.role == 'admin');
+    }
+
+    function isGroupOwner(groupId) {
+      return isGroupActiveMember(groupId) && memberDoc(groupId).data.role == 'owner';
+    }
+
+    function raceDoc(raceId) {
+      return get(/databases/$(database)/documents/races/$(raceId));
+    }
+
+    function raceExists(raceId) {
+      return exists(/databases/$(database)/documents/races/$(raceId));
+    }
+
+    function raceStatusAllowsPicks(raceId) {
+      let status = raceDoc(raceId).data.status;
+      return status == null || status == 'scheduled';
+    }
+
+    function raceLockTime(raceId) {
+      let race = raceDoc(raceId).data;
+      return race.lockAt != null ? race.lockAt : race.raceStartAt;
+    }
+
+    function raceStillOpen(raceId) {
+      let lockTime = raceLockTime(raceId);
+      return lockTime != null && request.time < lockTime;
+    }
+
+    function canWritePickCreate() {
+      return signedIn() &&
+        request.auth.uid == request.resource.data.uid &&
+        isGroupActiveMember(request.resource.data.groupId) &&
+        raceExists(request.resource.data.raceId) &&
+        raceDoc(request.resource.data.raceId).data.seasonId == request.resource.data.seasonId &&
+        raceStatusAllowsPicks(request.resource.data.raceId) &&
+        raceStillOpen(request.resource.data.raceId);
+    }
+
+    function canWritePickUpdate() {
+      return canWritePickCreate() &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data.groupId == resource.data.groupId &&
+        request.resource.data.seasonId == resource.data.seasonId &&
+        request.resource.data.raceId == resource.data.raceId;
+    }
+
+    match /users/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /groups/{groupId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if isAdmin() || isGroupOwner(groupId);
+
+      match /members/{uid} {
+        // Important for collectionGroup queries used by the app:
+        // allow read when the membership doc belongs to the signed-in user.
+        allow read: if isAdmin() || isGroupActiveMember(groupId) ||
+          (signedIn() && (resource.data.uid == request.auth.uid || request.auth.uid == uid));
+
+        allow create: if signedIn() && request.auth.uid == uid && request.resource.data.uid == uid && (
+          (
+            request.resource.data.role == 'member' &&
+            request.resource.data.status == 'pending'
+          ) || (
+            request.resource.data.role == 'owner' &&
+            request.resource.data.status == 'active' &&
+            get(/databases/$(database)/documents/groups/$(groupId)).data.ownerUid == request.auth.uid
+          )
+        );
+
+        allow update: if isAdmin() ||
+          (
+            isGroupAdmin(groupId) &&
+            resource.data.status == 'pending' &&
+            request.resource.data.status == 'active'
+          ) ||
+          (
+            isGroupOwner(groupId) &&
+            resource.data.status == 'active' &&
+            request.resource.data.status == 'active'
+          );
+
+        allow delete: if isAdmin() || isGroupOwner(groupId);
+      }
+    }
+
+    match /groupNames/{normalizedName} {
+      allow read: if signedIn();
+      allow create: if signedIn() &&
+        !exists(/databases/$(database)/documents/groupNames/$(normalizedName)) &&
+        request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /picks/{pickId} {
+      // getDoc() on a missing pick should be readable by signed-in users so the app
+      // can show "no pick yet" instead of PERMISSION_DENIED.
+      allow get: if signedIn() && (
+        !exists(/databases/$(database)/documents/picks/$(pickId)) ||
+        isGroupActiveMember(resource.data.groupId)
+      );
+      allow list: if signedIn() && isGroupActiveMember(resource.data.groupId);
+      allow create: if canWritePickCreate();
+      allow update: if canWritePickUpdate();
+      allow delete: if false;
+    }
+
+    match /seasons/{seasonId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /races/{raceId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /drivers/{driverId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /constructors/{constructorId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /results/{raceId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /scores/{scoreId} {
+      allow get: if signedIn() && (
+        !exists(/databases/$(database)/documents/scores/$(scoreId)) ||
+        isGroupActiveMember(resource.data.groupId)
+      );
+      allow list: if signedIn() && isGroupActiveMember(resource.data.groupId);
+      allow write: if isAdmin();
+    }
+
+    match /leaderboards/{leaderboardId} {
+      allow get: if signedIn() && (
+        !exists(/databases/$(database)/documents/leaderboards/$(leaderboardId)) ||
+        isGroupActiveMember(resource.data.groupId)
+      );
+      allow list: if signedIn() && isGroupActiveMember(resource.data.groupId);
+      allow write: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

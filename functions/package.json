@@ -1,0 +1,23 @@
+{
+  "name": "f1-total-functions",
+  "private": true,
+  "main": "lib/index.js",
+  "type": "commonjs",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf lib",
+    "deploy": "firebase deploy --only functions",
+    "serve": "firebase emulators:start --only functions",
+    "lint": "eslint --ext .js,.ts src"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^6.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
