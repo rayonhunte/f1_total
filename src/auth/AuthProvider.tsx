@@ -1,6 +1,7 @@
 import { onAuthStateChanged, type User } from 'firebase/auth'
 import {
   collection,
+  collectionGroup,
   doc,
   getDoc,
   getDocs,
@@ -11,8 +12,9 @@ import {
   where,
   type DocumentData,
 } from 'firebase/firestore'
+import { httpsCallable } from 'firebase/functions'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { auth, db } from '../lib/firebase'
+import { auth, db, functions } from '../lib/firebase'
 import { AuthContext, type GroupRole, type GroupSummary, type UserProfile } from './AuthContext'
 
 function normalizeProfile(uid: string, data: DocumentData | undefined, fallbackUser: User): UserProfile {
@@ -28,7 +30,23 @@ function normalizeProfile(uid: string, data: DocumentData | undefined, fallbackU
 }
 
 function generateJoinCode() {
-  return Math.random().toString(36).slice(2, 8).toUpperCase()
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  const bytes = new Uint8Array(8)
+
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(bytes)
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256)
+    }
+  }
+
+  let code = ''
+  for (let index = 0; index < 8; index += 1) {
+    code += alphabet[bytes[index] % alphabet.length]
+  }
+
+  return code
 }
 
 function normalizeGroupName(name: string) {
@@ -73,47 +91,83 @@ async function ensureUserProfile(user: User): Promise<UserProfile> {
 async function fetchGroupsForUser(uid: string): Promise<GroupSummary[]> {
   const groupsById = new Map<string, GroupSummary>()
 
-  const allGroupsSnapshot = await getDocs(collection(db, 'groups'))
+  const [ownerGroupsSnapshot, membershipsSnapshot] = await Promise.all([
+    getDocs(query(collection(db, 'groups'), where('ownerUid', '==', uid))),
+    getDocs(query(collectionGroup(db, 'members'), where('uid', '==', uid))),
+  ])
 
-  await Promise.all(
-    allGroupsSnapshot.docs.map(async (groupDoc) => {
-      const groupData = groupDoc.data()
-      const groupId = groupDoc.id
-      const name = (groupData.name as string | undefined) ?? groupId
-      const joinCode = (groupData.joinCode as string | undefined) ?? ''
-      const ownerUid = (groupData.ownerUid as string | undefined) ?? ''
+  const membershipByGroupId = new Map<
+    string,
+    {
+      role: GroupRole
+      status: 'active' | 'pending'
+    }
+  >()
 
-      if (ownerUid === uid) {
-        groupsById.set(groupId, {
-          id: groupId,
-          name,
-          joinCode,
-          role: 'owner',
-          status: 'active',
-        })
-        return
-      }
+  for (const membershipDoc of membershipsSnapshot.docs) {
+    const groupRef = membershipDoc.ref.parent.parent
+    if (!groupRef) continue
 
-      const membershipRef = doc(db, 'groups', groupId, 'members', uid)
-      const membershipSnap = await getDoc(membershipRef)
-      if (!membershipSnap.exists()) return
+    const data = membershipDoc.data()
+    const rawRole = data.role as string | undefined
+    const rawStatus = data.status as string | undefined
 
-      const membershipData = membershipSnap.data()
-      const rawRole = membershipData.role as string | undefined
-      const rawStatus = membershipData.status as string | undefined
-      const role: GroupRole = rawRole === 'owner' || rawRole === 'admin' ? rawRole : 'member'
+    membershipByGroupId.set(groupRef.id, {
+      role: rawRole === 'owner' || rawRole === 'admin' ? rawRole : 'member',
+      status: rawStatus === 'pending' ? 'pending' : 'active',
+    })
+  }
 
+  const ownerGroupIds = new Set(ownerGroupsSnapshot.docs.map((groupDoc) => groupDoc.id))
+  const membershipGroupIds = new Set(membershipByGroupId.keys())
+  const groupIds = Array.from(new Set([...ownerGroupIds, ...membershipGroupIds]))
+
+  const groupSnapshots = await Promise.all(groupIds.map((groupId) => getDoc(doc(db, 'groups', groupId))))
+
+  for (let index = 0; index < groupIds.length; index += 1) {
+    const groupId = groupIds[index]
+    const snapshot = groupSnapshots[index]
+    if (!snapshot.exists()) continue
+
+    const groupData = snapshot.data()
+    const name = (groupData.name as string | undefined) ?? groupId
+    const joinCode = (groupData.joinCode as string | undefined) ?? ''
+    const ownerUid = (groupData.ownerUid as string | undefined) ?? ''
+    const membership = membershipByGroupId.get(groupId)
+
+    if (ownerUid === uid || ownerGroupIds.has(groupId)) {
       groupsById.set(groupId, {
         id: groupId,
         name,
         joinCode,
-        role,
-        status: rawStatus === 'pending' ? 'pending' : 'active',
+        role: 'owner',
+        status: 'active',
       })
-    }),
-  )
+      continue
+    }
+
+    if (!membership) continue
+
+    groupsById.set(groupId, {
+      id: groupId,
+      name,
+      joinCode,
+      role: membership.role,
+      status: membership.status,
+    })
+  }
 
   return Array.from(groupsById.values()).sort((a, b) => a.name.localeCompare(b.name))
+}
+
+type RequestGroupAccessRequest = {
+  groupId: string
+  joinCode: string
+}
+
+type RequestGroupAccessResponse = {
+  status: 'active' | 'pending'
+  groupId: string
 }
 
 async function fetchGroupSummaryForUser(uid: string, groupId: string): Promise<GroupSummary | null> {
@@ -396,61 +450,38 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const joinCode = joinCodeInput.trim().toUpperCase()
       if (!joinCode) throw new Error('Join code is required.')
 
-      const groupRef = doc(db, 'groups', trimmedGroupId)
-      const groupSnapshot = await getDoc(groupRef)
-      if (!groupSnapshot.exists()) {
-        throw new Error('Selected group was not found.')
-      }
-
-      const storedJoinCode = ((groupSnapshot.data().joinCode as string | undefined) ?? '').toUpperCase()
-      if (storedJoinCode !== joinCode) {
-        throw new Error('Invite code does not match the selected group.')
-      }
-
-      const memberRef = doc(db, 'groups', trimmedGroupId, 'members', user.uid)
-      const memberSnapshot = await getDoc(memberRef)
-
-      if (memberSnapshot.exists()) {
-        const status = memberSnapshot.data().status as string | undefined
-
-        if (status === 'active') {
-          await setDoc(
-            doc(db, 'users', user.uid),
-            {
-              activeGroupId: trimmedGroupId,
-              updatedAt: serverTimestamp(),
-            },
-            { merge: true },
-          )
-
-          await loadGroupsAndSelection(user.uid, {
-            ...(profile ?? {
-              uid: user.uid,
-              displayName: user.displayName ?? 'F1 Player',
-              email: user.email ?? '',
-              role: 'user',
-            }),
-            activeGroupId: trimmedGroupId,
-          })
-
-          return
-        }
-
-        throw new Error('Your join request is pending approval.')
-      }
-
-      await setDoc(
-        memberRef,
-        {
-          uid: user.uid,
-          displayName: user.displayName ?? profile?.displayName ?? 'F1 Player',
-          email: user.email ?? profile?.email ?? '',
-          role: 'member',
-          status: 'pending',
-          requestedAt: serverTimestamp(),
-        },
-        { merge: true },
+      const requestGroupAccess = httpsCallable<RequestGroupAccessRequest, RequestGroupAccessResponse>(
+        functions,
+        'requestGroupAccess',
       )
+
+      const response = await requestGroupAccess({
+        groupId: trimmedGroupId,
+        joinCode,
+      })
+
+      if (response.data.status === 'active') {
+        await setDoc(
+          doc(db, 'users', user.uid),
+          {
+            activeGroupId: response.data.groupId,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true },
+        )
+
+        await loadGroupsAndSelection(user.uid, {
+          ...(profile ?? {
+            uid: user.uid,
+            displayName: user.displayName ?? 'F1 Player',
+            email: user.email ?? '',
+            role: 'user',
+          }),
+          activeGroupId: response.data.groupId,
+        })
+
+        return
+      }
 
       await loadGroupsAndSelection(user.uid, profile)
       throw new Error('Join request sent. A group admin must approve you.')
@@ -499,6 +530,23 @@ export function AuthProvider({ children }: AuthProviderProps) {
           approvedAt: serverTimestamp(),
           approvedBy: user.uid,
           joinedAt: serverTimestamp(),
+        },
+        { merge: true },
+      )
+
+      await setDoc(
+        doc(collection(db, 'notifications')),
+        {
+          uid,
+          type: 'approval',
+          title: 'Group request approved',
+          body: 'Your request to join the group was approved. You can now submit picks.',
+          data: {
+            groupId,
+            approvedBy: user.uid,
+          },
+          createdAt: serverTimestamp(),
+          readAt: null,
         },
         { merge: true },
       )

@@ -21,11 +21,13 @@ type DriverOption = {
   id: string
   name: string
   code?: string
+  fantasyCost?: number
 }
 
 type ConstructorOption = {
   id: string
   name: string
+  fantasyCost?: number
 }
 
 type RaceInfo = {
@@ -59,6 +61,22 @@ type PicksBootstrap = {
   race: RaceInfo
   drivers: DriverOption[]
   constructors: ConstructorOption[]
+  scoringRules: {
+    captainMultiplier: number
+    wildcardMultiplier: number
+    budgetMode: {
+      enabled: boolean
+      cap: number
+      requireSingleConstructor: boolean
+    }
+  }
+  wildcardUsedRaceId: string | null
+  recentResults: Array<{
+    raceId: string
+    round: number
+    podium: [string, string, string]
+    driverResults: Array<{ driverId: string; constructorId: string; points: number; dnf: boolean }>
+  }>
   existingPick?: {
     podium: {
       p1: string
@@ -66,6 +84,8 @@ type PicksBootstrap = {
       p3: string
     }
     constructors: string[]
+    captainDriverId?: string
+    wildcard?: boolean
   }
 }
 
@@ -91,11 +111,10 @@ function toDate(value?: string): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
-function computeRaceLockInfo(race: RaceInfo) {
+function computeRaceLockInfo(race: RaceInfo, now: Date) {
   const lockAt = toDate(race.lockAt)
   const raceStart = toDate(race.raceStartAt)
   const effectiveLockAt = lockAt ?? raceStart
-  const now = new Date()
   const status = race.status ?? 'scheduled'
   const isStatusLocked = status === 'in_progress' || status === 'completed'
   const isTimeLocked = effectiveLockAt ? effectiveLockAt <= now : false
@@ -112,6 +131,23 @@ function computeRaceLockInfo(race: RaceInfo) {
     status,
     stateLabel,
   }
+}
+
+function formatCountdown(lockAt: Date | null, nowMs: number): string {
+  if (!lockAt) return 'No lock configured'
+  const diff = lockAt.getTime() - nowMs
+  if (diff <= 0) return 'Locked'
+
+  const totalSeconds = Math.floor(diff / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+
+  if (hours > 0) {
+    return `${hours}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`
+  }
+
+  return `${minutes}m ${String(seconds).padStart(2, '0')}s`
 }
 
 async function fetchRacesForSeason(seasonId: string): Promise<RaceInfo[]> {
@@ -162,8 +198,9 @@ async function fetchOptions<T extends { id: string; name: string }>(
       return {
         id: item.id,
         name: (data.name as string | undefined) ?? item.id,
+        fantasyCost: Number(data.fantasyCost ?? (collectionName === 'drivers' ? 25 : 30)),
         ...(collectionName === 'drivers' ? { code: data.code as string | undefined } : {}),
-      } as T
+      } as unknown as T
     })
     .sort((a, b) => a.name.localeCompare(b.name))
 }
@@ -191,9 +228,24 @@ async function fetchLiveRoster(seasonId: string, seasonYear?: number): Promise<L
 async function fetchPicksBootstrap(uid: string, groupId: string, selectedRaceId?: string): Promise<PicksBootstrap> {
   const season = await resolveSeasonForClient()
   const seasonId = season.id
+  const seasonSnapshot = await getDoc(doc(db, 'seasons', seasonId))
+  const seasonRules = (seasonSnapshot.data()?.scoringRules ?? {}) as Record<string, unknown>
+
+  const scoringRules = {
+    captainMultiplier: Number(seasonRules.captainMultiplier ?? 1.5),
+    wildcardMultiplier: Number(seasonRules.wildcardMultiplier ?? 2),
+    budgetMode: {
+      enabled: Boolean((seasonRules.budgetMode as Record<string, unknown> | undefined)?.enabled ?? false),
+      cap: Number((seasonRules.budgetMode as Record<string, unknown> | undefined)?.cap ?? 100),
+      requireSingleConstructor:
+        (seasonRules.budgetMode as Record<string, unknown> | undefined)?.requireSingleConstructor !== false,
+    },
+  }
+
   const races = await fetchRacesForSeason(seasonId)
+  const now = new Date()
   const preferredRace = selectedRaceId ? races.find((race) => race.id === selectedRaceId) : undefined
-  const nextOpenRace = races.find((race) => !computeRaceLockInfo(race).isLocked)
+  const nextOpenRace = races.find((race) => !computeRaceLockInfo(race, now).isLocked)
   const race = preferredRace ?? nextOpenRace ?? races[races.length - 1]
 
   let drivers: DriverOption[] = []
@@ -211,7 +263,32 @@ async function fetchPicksBootstrap(uid: string, groupId: string, selectedRaceId?
   }
 
   const pickId = `${seasonId}_${race.id}_${groupId}_${uid}`
-  const pickSnapshot = await getDoc(doc(db, 'picks', pickId))
+  const [pickSnapshot, picksByUserSnapshot, recentResultsSnapshot] = await Promise.all([
+    getDoc(doc(db, 'picks', pickId)),
+    getDocs(query(collection(db, 'picks'), where('uid', '==', uid))),
+    getDocs(query(collection(db, 'results'), where('seasonId', '==', seasonId))),
+  ])
+
+  const wildcardUsedRaceId =
+    picksByUserSnapshot.docs
+      .map((row) => row.data())
+      .find(
+        (row) =>
+          row.seasonId === seasonId && row.groupId === groupId && row.uid === uid && row.wildcard === true,
+      )?.raceId ?? null
+
+  const recentResults = recentResultsSnapshot.docs
+    .map((row) => {
+      const data = row.data()
+      return {
+        raceId: row.id,
+        round: Number(data.round ?? 0),
+        podium: (data.podium as [string, string, string]) ?? ['', '', ''],
+        driverResults: (data.driverResults as Array<{ driverId: string; constructorId: string; points: number; dnf: boolean }>) ?? [],
+      }
+    })
+    .sort((a, b) => b.round - a.round)
+    .slice(0, 5)
 
   return {
     seasonId,
@@ -221,10 +298,15 @@ async function fetchPicksBootstrap(uid: string, groupId: string, selectedRaceId?
     race,
     drivers,
     constructors,
+    scoringRules,
+    wildcardUsedRaceId,
+    recentResults,
     existingPick: pickSnapshot.exists()
       ? {
           podium: pickSnapshot.data().podium as { p1: string; p2: string; p3: string },
           constructors: (pickSnapshot.data().constructors as string[]) ?? [],
+          captainDriverId: (pickSnapshot.data().captainDriverId as string | undefined) ?? undefined,
+          wildcard: pickSnapshot.data().wildcard === true,
         }
       : undefined,
   }
@@ -235,12 +317,20 @@ export function PicksPage() {
   const queryClient = useQueryClient()
   const [formError, setFormError] = useState<string | null>(null)
   const [selectedRaceId, setSelectedRaceId] = useState<string>('')
+  const [captainDriverId, setCaptainDriverId] = useState<string>('')
+  const [wildcardEnabled, setWildcardEnabled] = useState(false)
+  const [nowMs, setNowMs] = useState(() => Date.now())
   const [podiumSelections, setPodiumSelections] = useState<{ p1: string; p2: string; p3: string }>({
     p1: '',
     p2: '',
     p3: '',
   })
   const focusChipRef = useRef<HTMLButtonElement | null>(null)
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   const bootstrapQuery = useQuery({
     queryKey: ['picks-bootstrap', user?.uid, activeGroupId, selectedRaceId],
@@ -263,11 +353,15 @@ export function PicksPage() {
       p2: existingPodium?.p2 ?? '',
       p3: existingPodium?.p3 ?? '',
     })
+    setCaptainDriverId(bootstrapQuery.data?.existingPick?.captainDriverId ?? '')
+    setWildcardEnabled(bootstrapQuery.data?.existingPick?.wildcard === true)
   }, [
     bootstrapQuery.data?.race.id,
     bootstrapQuery.data?.existingPick?.podium.p1,
     bootstrapQuery.data?.existingPick?.podium.p2,
     bootstrapQuery.data?.existingPick?.podium.p3,
+    bootstrapQuery.data?.existingPick?.captainDriverId,
+    bootstrapQuery.data?.existingPick?.wildcard,
   ])
 
   const lockInfo = useMemo(() => {
@@ -279,15 +373,88 @@ export function PicksPage() {
         stateLabel: 'Open',
       }
     }
-    return computeRaceLockInfo(bootstrapQuery.data.race)
-  }, [bootstrapQuery.data?.race])
+    return computeRaceLockInfo(bootstrapQuery.data.race, new Date(nowMs))
+  }, [bootstrapQuery.data?.race, nowMs])
 
   const focusRaceId = useMemo(() => {
     const data = bootstrapQuery.data
     if (!data) return ''
-    const openRace = data.races.find((race) => !computeRaceLockInfo(race).isLocked)
+    const openRace = data.races.find((race) => !computeRaceLockInfo(race, new Date(nowMs)).isLocked)
     return selectedRaceId || openRace?.id || data.race.id
-  }, [bootstrapQuery.data, selectedRaceId])
+  }, [bootstrapQuery.data, selectedRaceId, nowMs])
+
+  const countdownLabel = useMemo(() => formatCountdown(lockInfo.effectiveLockAt, nowMs), [lockInfo.effectiveLockAt, nowMs])
+
+  const hints = useMemo(() => {
+    const data = bootstrapQuery.data
+    if (!data) {
+      return {
+        safeDrivers: [] as DriverOption[],
+        stableConstructors: [] as ConstructorOption[],
+        deadDriverIds: new Set<string>(),
+        swapSuggestions: [] as DriverOption[],
+      }
+    }
+
+    const driverStats = new Map<string, { races: number; points: number; dnfs: number }>()
+    const constructorStats = new Map<string, { races: number; points: number }>()
+
+    for (const race of data.recentResults) {
+      for (const row of race.driverResults) {
+        const d = driverStats.get(row.driverId) ?? { races: 0, points: 0, dnfs: 0 }
+        d.races += 1
+        d.points += Number(row.points ?? 0)
+        if (row.dnf) d.dnfs += 1
+        driverStats.set(row.driverId, d)
+
+        const c = constructorStats.get(row.constructorId) ?? { races: 0, points: 0 }
+        c.races += 1
+        c.points += Number(row.points ?? 0)
+        constructorStats.set(row.constructorId, c)
+      }
+    }
+
+    const safeDrivers = data.drivers
+      .slice()
+      .sort((a, b) => {
+        const aStats = driverStats.get(a.id)
+        const bStats = driverStats.get(b.id)
+        const aRaces = Math.max(1, aStats?.races ?? 1)
+        const bRaces = Math.max(1, bStats?.races ?? 1)
+        const aScore = (aStats?.points ?? 0) / aRaces - ((aStats?.dnfs ?? 0) / aRaces) * 8
+        const bScore = (bStats?.points ?? 0) / bRaces - ((bStats?.dnfs ?? 0) / bRaces) * 8
+        return bScore - aScore
+      })
+      .slice(0, 4)
+
+    const stableConstructors = data.constructors
+      .slice()
+      .sort((a, b) => {
+        const aStats = constructorStats.get(a.id)
+        const bStats = constructorStats.get(b.id)
+        const aAvg = (aStats?.points ?? 0) / Math.max(1, aStats?.races ?? 1)
+        const bAvg = (bStats?.points ?? 0) / Math.max(1, bStats?.races ?? 1)
+        return bAvg - aAvg
+      })
+      .slice(0, 3)
+
+    const deadDriverIds = new Set<string>()
+    for (const [driverId, stats] of driverStats.entries()) {
+      if (stats.races >= 2 && stats.dnfs / stats.races >= 0.5) {
+        deadDriverIds.add(driverId)
+      }
+    }
+
+    const selected = new Set([podiumSelections.p1, podiumSelections.p2, podiumSelections.p3].filter(Boolean))
+    const swapSuggestions = safeDrivers.filter((driver) => !selected.has(driver.id)).slice(0, 3)
+
+    return {
+      safeDrivers,
+      stableConstructors,
+      deadDriverIds,
+      swapSuggestions,
+    }
+  }, [bootstrapQuery.data, podiumSelections.p1, podiumSelections.p2, podiumSelections.p3])
 
   useEffect(() => {
     if (!focusChipRef.current) return
@@ -319,6 +486,43 @@ export function PicksPage() {
         throw new Error(validated.error.issues[0]?.message ?? 'Invalid pick selection.')
       }
 
+      const captain = String(formData.get('captainDriverId') ?? '')
+      if (!captain || ![validated.data.p1, validated.data.p2, validated.data.p3].includes(captain)) {
+        throw new Error('Captain must be one of your selected podium drivers.')
+      }
+
+      const wildcard = formData.get('wildcard') === 'on'
+      const wildcardUsedRaceId = bootstrapQuery.data.wildcardUsedRaceId
+      if (wildcard && wildcardUsedRaceId && wildcardUsedRaceId !== bootstrapQuery.data.race.id) {
+        throw new Error(`Wildcard already used in ${wildcardUsedRaceId}.`)
+      }
+
+      const budgetMode = bootstrapQuery.data.scoringRules.budgetMode
+      const driverCostMap = new Map(bootstrapQuery.data.drivers.map((driver) => [driver.id, Number(driver.fantasyCost ?? 25)]))
+      const constructorCostMap = new Map(
+        bootstrapQuery.data.constructors.map((constructor) => [constructor.id, Number(constructor.fantasyCost ?? 30)]),
+      )
+
+      const budgetCost =
+        [validated.data.p1, validated.data.p2, validated.data.p3].reduce(
+          (sum, driverId) => sum + (driverCostMap.get(driverId) ?? 0),
+          0,
+        ) +
+        validated.data.constructors.reduce(
+          (sum, constructorId) => sum + (constructorCostMap.get(constructorId) ?? 0),
+          0,
+        )
+
+      if (budgetMode.enabled) {
+        if (budgetMode.requireSingleConstructor && validated.data.constructors.length !== 1) {
+          throw new Error('Budget mode requires exactly one constructor.')
+        }
+
+        if (budgetCost > budgetMode.cap) {
+          throw new Error(`Budget exceeded: ${budgetCost}/${budgetMode.cap}`)
+        }
+      }
+
       const { seasonId, race } = bootstrapQuery.data
       const pickId = `${seasonId}_${race.id}_${activeGroupId}_${user.uid}`
 
@@ -334,6 +538,9 @@ export function PicksPage() {
             p2: validated.data.p2,
             p3: validated.data.p3,
           },
+          captainDriverId: captain,
+          wildcard,
+          budgetCost,
           constructors: validated.data.constructors,
           submittedAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -425,7 +632,7 @@ export function PicksPage() {
       </p>
       <div className="race-timeline" aria-label="Race timeline">
         {data.races.map((race) => {
-          const raceState = computeRaceLockInfo(race)
+          const raceState = computeRaceLockInfo(race, new Date(nowMs))
           const isActive = race.id === data.race.id
           return (
             <button
@@ -446,7 +653,7 @@ export function PicksPage() {
         Race Selection
         <select value={data.race.id} onChange={(event) => setSelectedRaceId(event.target.value)}>
           {data.races.map((race) => {
-            const raceLock = computeRaceLockInfo(race)
+            const raceLock = computeRaceLockInfo(race, new Date(nowMs))
             return (
               <option key={race.id} value={race.id}>
                 R{race.round} - {race.name} [{raceLock.stateLabel}]
@@ -460,8 +667,29 @@ export function PicksPage() {
         <strong>{lockInfo.effectiveLockAt ? lockInfo.effectiveLockAt.toLocaleString() : 'Not configured'}</strong>
       </p>
       <p>
+        Countdown: <strong>{countdownLabel}</strong>
+      </p>
+      <p>
         Status: <strong>{lockInfo.stateLabel}</strong>
       </p>
+
+      <div className="admin-card">
+        <h3>Safe Pick Hint</h3>
+        <p>High-floor drivers: {hints.safeDrivers.map((driver) => driver.name).join(', ') || 'No data yet'}</p>
+        <p>Stable constructors: {hints.stableConstructors.map((constructor) => constructor.name).join(', ') || 'No data yet'}</p>
+      </div>
+
+      <div className="admin-card">
+        <h3>Anti-Dead-Team Auto Suggest</h3>
+        {[podiumSelections.p1, podiumSelections.p2, podiumSelections.p3].some((driverId) => hints.deadDriverIds.has(driverId)) ? (
+          <>
+            <p className="validation-error">One of your selected drivers has high recent DNF risk.</p>
+            <p>Suggested swaps: {hints.swapSuggestions.map((driver) => driver.name).join(', ') || 'None'}</p>
+          </>
+        ) : (
+          <p>No critical reliability risks detected in your current podium picks.</p>
+        )}
+      </div>
 
       {lockInfo.isLocked ? <p className="validation-error">Picks are locked for this race.</p> : null}
 
@@ -540,8 +768,33 @@ export function PicksPage() {
           </label>
         </div>
 
+        <label>
+          Captain Driver ({data.scoringRules.captainMultiplier}x)
+          <select
+            name="captainDriverId"
+            value={captainDriverId}
+            onChange={(event) => setCaptainDriverId(event.target.value)}
+            disabled={lockInfo.isLocked}
+          >
+            <option value="">Select captain</option>
+            {[podiumSelections.p1, podiumSelections.p2, podiumSelections.p3]
+              .filter(Boolean)
+              .map((driverId) => {
+                const driver = data.drivers.find((item) => item.id === driverId)
+                if (!driver) return null
+                return (
+                  <option key={driver.id} value={driver.id}>
+                    {driver.name}
+                  </option>
+                )
+              })}
+          </select>
+        </label>
+
         <div>
-          <h3>Constructors (optional, choose up to 2)</h3>
+          <h3>
+            Constructors ({data.scoringRules.budgetMode.enabled ? 'budget mode requires 1' : 'optional, choose up to 2'})
+          </h3>
           <div className="constructor-grid">
             {data.constructors.map((constructor) => (
               <label key={constructor.id} className="constructor-chip">
@@ -552,11 +805,38 @@ export function PicksPage() {
                   defaultChecked={data.existingPick?.constructors.includes(constructor.id)}
                   disabled={lockInfo.isLocked}
                 />
-                <span>{constructor.name}</span>
+                <span>
+                  {constructor.name}
+                  {constructor.fantasyCost != null ? ` (${constructor.fantasyCost})` : ''}
+                </span>
               </label>
             ))}
           </div>
         </div>
+
+        <label className="constructor-chip">
+          <input
+            type="checkbox"
+            name="wildcard"
+            checked={wildcardEnabled}
+            onChange={(event) => setWildcardEnabled(event.target.checked)}
+            disabled={lockInfo.isLocked || Boolean(data.wildcardUsedRaceId && data.wildcardUsedRaceId !== data.race.id)}
+          />
+          <span>
+            Wildcard ({data.scoringRules.wildcardMultiplier}x)
+            {data.wildcardUsedRaceId
+              ? data.wildcardUsedRaceId === data.race.id
+                ? ' - active this race'
+                : ` - already used at ${data.wildcardUsedRaceId}`
+              : ' - available'}
+          </span>
+        </label>
+
+        {data.scoringRules.budgetMode.enabled ? (
+          <p>
+            Budget mode: cap <strong>{data.scoringRules.budgetMode.cap}</strong>. Build your team under the cap.
+          </p>
+        ) : null}
 
         <button type="submit" disabled={saveMutation.isPending || lockInfo.isLocked}>
           {saveMutation.isPending ? 'Saving...' : 'Save Picks'}

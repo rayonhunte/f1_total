@@ -1,4 +1,4 @@
-import type { PickDoc, RaceResultDoc, ScoringRules } from './types'
+import type { PickDoc, PickScoreBreakdown, RaceResultDoc, ScoringRules } from './types'
 
 export const DEFAULT_SCORING_RULES: ScoringRules = {
   podiumPoints: {
@@ -17,9 +17,22 @@ export const DEFAULT_SCORING_RULES: ScoringRules = {
     enabled: false,
     value: 0,
   },
+  captainMultiplier: 1.5,
+  wildcardMultiplier: 2,
+  budgetMode: {
+    enabled: false,
+    cap: 100,
+    requireSingleConstructor: true,
+  },
 }
 
 export function mergeScoringRules(partial?: Partial<ScoringRules>): ScoringRules {
+  const defaultBudgetMode = DEFAULT_SCORING_RULES.budgetMode ?? {
+    enabled: false,
+    cap: 100,
+    requireSingleConstructor: true,
+  }
+
   return {
     ...DEFAULT_SCORING_RULES,
     ...partial,
@@ -35,16 +48,41 @@ export function mergeScoringRules(partial?: Partial<ScoringRules>): ScoringRules
       ...DEFAULT_SCORING_RULES.dnfPenalty,
       ...(partial?.dnfPenalty ?? {}),
     },
+    budgetMode: {
+      enabled: partial?.budgetMode?.enabled ?? defaultBudgetMode.enabled,
+      cap: partial?.budgetMode?.cap ?? defaultBudgetMode.cap,
+      requireSingleConstructor:
+        partial?.budgetMode?.requireSingleConstructor ?? defaultBudgetMode.requireSingleConstructor,
+    },
     constructorPointsCustom: partial?.constructorPointsCustom ?? {},
   }
 }
 
-export function calculatePickScore(pick: PickDoc, result: RaceResultDoc, rules: ScoringRules): number {
+export function calculatePickScoreBreakdown(
+  pick: PickDoc,
+  result: RaceResultDoc,
+  rules: ScoringRules,
+  applyWildcard: boolean,
+): PickScoreBreakdown {
   let points = 0
+  const driverPointMap = new Map<string, number>()
 
-  if (pick.podium.p1 === result.podium[0]) points += rules.podiumPoints.p1
-  if (pick.podium.p2 === result.podium[1]) points += rules.podiumPoints.p2
-  if (pick.podium.p3 === result.podium[2]) points += rules.podiumPoints.p3
+  function addDriverPoints(driverId: string, value: number) {
+    driverPointMap.set(driverId, (driverPointMap.get(driverId) ?? 0) + value)
+  }
+
+  if (pick.podium.p1 === result.podium[0]) {
+    points += rules.podiumPoints.p1
+    addDriverPoints(pick.podium.p1, rules.podiumPoints.p1)
+  }
+  if (pick.podium.p2 === result.podium[1]) {
+    points += rules.podiumPoints.p2
+    addDriverPoints(pick.podium.p2, rules.podiumPoints.p2)
+  }
+  if (pick.podium.p3 === result.podium[2]) {
+    points += rules.podiumPoints.p3
+    addDriverPoints(pick.podium.p3, rules.podiumPoints.p3)
+  }
 
   for (const constructorId of pick.constructors ?? []) {
     const constructorBase =
@@ -62,7 +100,9 @@ export function calculatePickScore(pick: PickDoc, result: RaceResultDoc, rules: 
 
   for (const driverId of selectedDrivers) {
     const movementGain = Math.max(0, result.driverMovement[driverId] ?? 0)
-    points += movementGain * rules.standingsMovement.driverGain
+    const movementPoints = movementGain * rules.standingsMovement.driverGain
+    points += movementPoints
+    addDriverPoints(driverId, movementPoints)
   }
 
   if (rules.dnfPenalty.enabled && rules.dnfPenalty.value > 0) {
@@ -71,9 +111,29 @@ export function calculatePickScore(pick: PickDoc, result: RaceResultDoc, rules: 
     for (const driverId of selectedDrivers) {
       if (dnfMap.get(driverId)) {
         points -= rules.dnfPenalty.value
+        addDriverPoints(driverId, -rules.dnfPenalty.value)
       }
     }
   }
 
-  return Math.round(points)
+  const captainMultiplier = Math.max(1, rules.captainMultiplier ?? 1.5)
+  const captainDriverId = pick.captainDriverId
+  const captainBase = captainDriverId ? driverPointMap.get(captainDriverId) ?? 0 : 0
+  const captainBonus = captainBase > 0 ? captainBase * (captainMultiplier - 1) : 0
+
+  const basePlusCaptain = points + captainBonus
+  const wildcardMultiplier = Math.max(1, rules.wildcardMultiplier ?? 2)
+  const wildcardBonus = applyWildcard ? basePlusCaptain * (wildcardMultiplier - 1) : 0
+  const totalPoints = basePlusCaptain + wildcardBonus
+
+  return {
+    basePoints: Math.round(points),
+    captainBonus: Math.round(captainBonus),
+    wildcardBonus: Math.round(wildcardBonus),
+    totalPoints: Math.round(totalPoints),
+  }
+}
+
+export function calculatePickScore(pick: PickDoc, result: RaceResultDoc, rules: ScoringRules): number {
+  return calculatePickScoreBreakdown(pick, result, rules, false).totalPoints
 }

@@ -77,6 +77,13 @@ type ScoringRulesForm = {
     enabled: boolean
     value: number
   }
+  captainMultiplier: number
+  wildcardMultiplier: number
+  budgetMode: {
+    enabled: boolean
+    cap: number
+    requireSingleConstructor: boolean
+  }
 }
 
 type ScoringConfig = {
@@ -96,7 +103,14 @@ type UpdateSeasonScoringRulesResponse = {
   scoringRules: ScoringRulesForm
 }
 
-type AdminTabKey = 'invite' | 'preseason' | 'scoring' | 'members'
+type SimulateSeasonScoringResponse = {
+  seasonId: string
+  sampleSize: number
+  topGainers: Array<{ groupId: string; uid: string; currentTotal: number; simulatedTotal: number; delta: number }>
+  topLosers: Array<{ groupId: string; uid: string; currentTotal: number; simulatedTotal: number; delta: number }>
+}
+
+type AdminTabKey = 'invite' | 'preseason' | 'scoring' | 'simulation' | 'members'
 
 const DEFAULT_SCORING_RULES: ScoringRulesForm = {
   podiumPoints: {
@@ -114,6 +128,13 @@ const DEFAULT_SCORING_RULES: ScoringRulesForm = {
   dnfPenalty: {
     enabled: false,
     value: 0,
+  },
+  captainMultiplier: 1.5,
+  wildcardMultiplier: 2,
+  budgetMode: {
+    enabled: false,
+    cap: 100,
+    requireSingleConstructor: true,
   },
 }
 
@@ -222,6 +243,11 @@ async function fetchScoringConfig(seasonId: string): Promise<ScoringConfig> {
       ? (rawScoring.dnfPenalty as Record<string, unknown>)
       : {}
 
+  const rawBudget =
+    rawScoring.budgetMode && typeof rawScoring.budgetMode === 'object'
+      ? (rawScoring.budgetMode as Record<string, unknown>)
+      : {}
+
   const constructors = constructorsSnap.docs
     .map((constructorDoc) => {
       const data = constructorDoc.data()
@@ -268,6 +294,19 @@ async function fetchScoringConfig(seasonId: string): Promise<ScoringConfig> {
     dnfPenalty: {
       enabled: rawDnf.enabled === true,
       value: safeNumber(rawDnf.value, DEFAULT_SCORING_RULES.dnfPenalty.value),
+    },
+    captainMultiplier: safeNumber(
+      rawScoring.captainMultiplier,
+      DEFAULT_SCORING_RULES.captainMultiplier,
+    ),
+    wildcardMultiplier: safeNumber(
+      rawScoring.wildcardMultiplier,
+      DEFAULT_SCORING_RULES.wildcardMultiplier,
+    ),
+    budgetMode: {
+      enabled: rawBudget.enabled === true,
+      cap: safeNumber(rawBudget.cap, DEFAULT_SCORING_RULES.budgetMode.cap),
+      requireSingleConstructor: rawBudget.requireSingleConstructor !== false,
     },
   }
 
@@ -333,6 +372,7 @@ export function AdminPage() {
   const [seedDefaultRoster, setSeedDefaultRoster] = useState(true)
   const [scoringRulesForm, setScoringRulesForm] = useState<ScoringRulesForm>(DEFAULT_SCORING_RULES)
   const [scoringNotice, setScoringNotice] = useState<string | null>(null)
+  const [simulationResult, setSimulationResult] = useState<SimulateSeasonScoringResponse | null>(null)
 
   const groupQuery = useQuery({
     queryKey: ['group-admin', activeGroupId],
@@ -473,6 +513,34 @@ export function AdminPage() {
     },
   })
 
+  const simulateMutation = useMutation({
+    mutationFn: async () => {
+      if (!scoringQuery.data?.seasonId) {
+        throw new Error('No season selected to simulate scoring rules.')
+      }
+
+      const callable = httpsCallable<{ seasonId: string; scoringRules: ScoringRulesForm }, SimulateSeasonScoringResponse>(
+        functions,
+        'simulateSeasonScoring',
+      )
+
+      const response = await callable({
+        seasonId: scoringQuery.data.seasonId,
+        scoringRules: scoringRulesForm,
+      })
+
+      return response.data
+    },
+    onSuccess: (result) => {
+      setActionError(null)
+      setSimulationResult(result)
+    },
+    onError: (error) => {
+      setSimulationResult(null)
+      setActionError(error instanceof Error ? error.message : 'Failed to simulate scoring rules.')
+    },
+  })
+
   const inviteLink = useMemo(() => {
     if (!groupQuery.data?.joinCode || !activeGroupId) return ''
     if (typeof window === 'undefined') return ''
@@ -556,6 +624,15 @@ export function AdminPage() {
           onClick={() => setActiveTab('scoring')}
         >
           Scoring
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'simulation'}
+          className={activeTab === 'simulation' ? 'admin-tab-btn active' : 'admin-tab-btn'}
+          onClick={() => setActiveTab('simulation')}
+        >
+          Simulation
         </button>
         <button
           type="button"
@@ -901,6 +978,96 @@ export function AdminPage() {
                   />
                 </label>
 
+                <label>
+                  Captain multiplier
+                  <input
+                    type="number"
+                    min={1}
+                    step="0.1"
+                    value={String(scoringRulesForm.captainMultiplier)}
+                    onChange={(event) =>
+                      setScoringRulesForm((current) => ({
+                        ...current,
+                        captainMultiplier: safeNumber(event.target.value, current.captainMultiplier),
+                      }))
+                    }
+                  />
+                </label>
+
+                <label>
+                  Wildcard multiplier
+                  <input
+                    type="number"
+                    min={1}
+                    step="0.1"
+                    value={String(scoringRulesForm.wildcardMultiplier)}
+                    onChange={(event) =>
+                      setScoringRulesForm((current) => ({
+                        ...current,
+                        wildcardMultiplier: safeNumber(event.target.value, current.wildcardMultiplier),
+                      }))
+                    }
+                  />
+                </label>
+
+                <label>
+                  Budget mode enabled
+                  <select
+                    value={scoringRulesForm.budgetMode.enabled ? 'yes' : 'no'}
+                    onChange={(event) =>
+                      setScoringRulesForm((current) => ({
+                        ...current,
+                        budgetMode: {
+                          ...current.budgetMode,
+                          enabled: event.target.value === 'yes',
+                        },
+                      }))
+                    }
+                  >
+                    <option value="no">No</option>
+                    <option value="yes">Yes</option>
+                  </select>
+                </label>
+
+                <label>
+                  Budget cap
+                  <input
+                    type="number"
+                    min={0}
+                    value={String(scoringRulesForm.budgetMode.cap)}
+                    disabled={!scoringRulesForm.budgetMode.enabled}
+                    onChange={(event) =>
+                      setScoringRulesForm((current) => ({
+                        ...current,
+                        budgetMode: {
+                          ...current.budgetMode,
+                          cap: safeNumber(event.target.value, current.budgetMode.cap),
+                        },
+                      }))
+                    }
+                  />
+                </label>
+
+                <label>
+                  Require single constructor in budget mode
+                  <select
+                    value={scoringRulesForm.budgetMode.requireSingleConstructor ? 'yes' : 'no'}
+                    disabled={!scoringRulesForm.budgetMode.enabled}
+                    onChange={(event) =>
+                      setScoringRulesForm((current) => ({
+                        ...current,
+                        budgetMode: {
+                          ...current.budgetMode,
+                          requireSingleConstructor: event.target.value === 'yes',
+                        },
+                      }))
+                    }
+                  >
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                </label>
+
                 {scoringRulesForm.constructorPointsMode === 'custom' ? (
                   <>
                     <h4>Custom Constructor Points</h4>
@@ -997,6 +1164,48 @@ export function AdminPage() {
               </ul>
             </div>
           </>
+        ) : null}
+
+        {activeTab === 'simulation' ? (
+          <div className="admin-card">
+            <h3>Admin Simulation Tool</h3>
+            <p>Test these scoring rules against past races before applying them.</p>
+            <button type="button" onClick={() => simulateMutation.mutate()} disabled={simulateMutation.isPending}>
+              {simulateMutation.isPending ? 'Simulating...' : 'Run Simulation'}
+            </button>
+
+            {simulationResult ? (
+              <>
+                <p>
+                  Simulated entries: <strong>{simulationResult.sampleSize}</strong>
+                </p>
+                <h4>Top Gainers</h4>
+                <ul className="admin-list">
+                  {simulationResult.topGainers.slice(0, 10).map((row) => (
+                    <li key={`gain-${row.groupId}-${row.uid}`}>
+                      <span>
+                        {row.uid} ({row.groupId})
+                      </span>
+                      <strong>+{row.delta}</strong>
+                    </li>
+                  ))}
+                </ul>
+                <h4>Top Losers</h4>
+                <ul className="admin-list">
+                  {simulationResult.topLosers.slice(0, 10).map((row) => (
+                    <li key={`loss-${row.groupId}-${row.uid}`}>
+                      <span>
+                        {row.uid} ({row.groupId})
+                      </span>
+                      <strong>{row.delta}</strong>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p>No simulation result yet.</p>
+            )}
+          </div>
         ) : null}
       </div>
     </section>

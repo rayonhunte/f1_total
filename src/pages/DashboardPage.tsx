@@ -1,8 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore'
+import { httpsCallable } from 'firebase/functions'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/useAuth'
-import { db } from '../lib/firebase'
+import { db, functions } from '../lib/firebase'
 import { resolveSeasonForClient } from '../lib/season'
 
 type CurrentPickSummary = {
@@ -83,6 +85,7 @@ async function fetchCurrentPick(uid: string, groupId: string): Promise<CurrentPi
 
 export function DashboardPage() {
   const { profile, groups, activeGroupId, user } = useAuth()
+  const [notificationNotice, setNotificationNotice] = useState<string | null>(null)
   const activeGroup = groups.find((group) => group.id === activeGroupId)
   const activeGroupLabel = activeGroup?.name ?? activeGroupId ?? 'No active group selected'
 
@@ -91,6 +94,53 @@ export function DashboardPage() {
     queryFn: () => fetchCurrentPick(user!.uid, activeGroupId!),
     enabled: Boolean(user?.uid && activeGroupId),
   })
+
+  const notificationPrefsQuery = useQuery({
+    queryKey: ['notification-prefs', user?.uid],
+    queryFn: async () => {
+      const snapshot = await getDoc(doc(db, 'notificationPrefs', user!.uid))
+      return snapshot.exists()
+        ? (snapshot.data() as { emailEnabled?: boolean; pushEnabled?: boolean; lockReminderMinutesBefore?: number })
+        : { emailEnabled: true, pushEnabled: true, lockReminderMinutesBefore: 60 }
+    },
+    enabled: Boolean(user?.uid),
+  })
+
+  const notificationsQuery = useQuery({
+    queryKey: ['notifications', user?.uid],
+    queryFn: async () => {
+      const snapshot = await getDocs(query(collection(db, 'notifications'), where('uid', '==', user!.uid)))
+      return snapshot.docs
+        .map((row) => {
+          const data = row.data()
+          return {
+            id: row.id,
+            title: String(data.title ?? 'Notification'),
+            body: String(data.body ?? ''),
+            type: String(data.type ?? 'info'),
+            createdAt:
+              data.createdAt && typeof data.createdAt.toDate === 'function'
+                ? data.createdAt.toDate().toISOString()
+                : String(data.createdAt ?? ''),
+          }
+        })
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 8)
+    },
+    enabled: Boolean(user?.uid),
+    refetchInterval: 60_000,
+  })
+
+  const saveNotificationPreferences = async (next: {
+    emailEnabled: boolean
+    pushEnabled: boolean
+    lockReminderMinutesBefore: number
+  }) => {
+    const callable = httpsCallable(functions, 'saveNotificationPreferences')
+    await callable(next)
+    await notificationPrefsQuery.refetch()
+    setNotificationNotice('Notification preferences updated.')
+  }
 
   return (
     <section>
@@ -148,6 +198,61 @@ export function DashboardPage() {
         <Link to="/app/picks" className="secondary-btn card-link-btn">
           Edit Picks
         </Link>
+      </div>
+
+      <div className="dashboard-card">
+        <h3>Notifications</h3>
+        {notificationPrefsQuery.data ? (
+          <div className="pick-summary-grid">
+            <div>
+              <span>Email</span>
+              <button
+                type="button"
+                onClick={() =>
+                  void saveNotificationPreferences({
+                    emailEnabled: !Boolean(notificationPrefsQuery.data?.emailEnabled),
+                    pushEnabled: Boolean(notificationPrefsQuery.data?.pushEnabled),
+                    lockReminderMinutesBefore: Number(notificationPrefsQuery.data?.lockReminderMinutesBefore ?? 60),
+                  })
+                }
+              >
+                {notificationPrefsQuery.data.emailEnabled ? 'On' : 'Off'}
+              </button>
+            </div>
+            <div>
+              <span>Push</span>
+              <button
+                type="button"
+                onClick={() =>
+                  void saveNotificationPreferences({
+                    emailEnabled: Boolean(notificationPrefsQuery.data?.emailEnabled),
+                    pushEnabled: !Boolean(notificationPrefsQuery.data?.pushEnabled),
+                    lockReminderMinutesBefore: Number(notificationPrefsQuery.data?.lockReminderMinutesBefore ?? 60),
+                  })
+                }
+              >
+                {notificationPrefsQuery.data.pushEnabled ? 'On' : 'Off'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p>Loading notification settings...</p>
+        )}
+        {notificationNotice ? <p className="notice-text">{notificationNotice}</p> : null}
+
+        {notificationsQuery.data?.length ? (
+          <ul className="race-score-list">
+            {notificationsQuery.data.map((item) => (
+              <li key={item.id}>
+                <span>{item.title}</span>
+                <strong>{new Date(item.createdAt).toLocaleString()}</strong>
+                <span>{item.body}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p>No recent notifications.</p>
+        )}
       </div>
     </section>
   )
