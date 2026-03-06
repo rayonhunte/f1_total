@@ -1,7 +1,6 @@
 import { onAuthStateChanged, type User } from 'firebase/auth'
 import {
   collection,
-  collectionGroup,
   doc,
   getDoc,
   getDocs,
@@ -88,76 +87,29 @@ async function ensureUserProfile(user: User): Promise<UserProfile> {
   return normalizeProfile(user.uid, refreshed.data(), user)
 }
 
-async function fetchGroupsForUser(uid: string): Promise<GroupSummary[]> {
-  const groupsById = new Map<string, GroupSummary>()
+async function fetchGroupsForUser(): Promise<GroupSummary[]> {
+  try {
+    const getMyGroups = httpsCallable<undefined, { groups: GroupSummary[] }>(functions, 'getMyGroups')
+    const response = await getMyGroups()
 
-  const [ownerGroupsSnapshot, membershipsSnapshot] = await Promise.all([
-    getDocs(query(collection(db, 'groups'), where('ownerUid', '==', uid))),
-    getDocs(query(collectionGroup(db, 'members'), where('uid', '==', uid))),
-  ])
+    const groups: GroupSummary[] = (response.data.groups ?? [])
+      .filter((group) => group.id && group.name)
+      .map((group) => ({
+        id: group.id,
+        name: group.name,
+        joinCode: group.joinCode ?? '',
+        role:
+          group.role === 'owner' || group.role === 'admin' || group.role === 'member'
+            ? group.role
+            : 'member',
+        status: group.status === 'pending' ? 'pending' : 'active',
+      }))
 
-  const membershipByGroupId = new Map<
-    string,
-    {
-      role: GroupRole
-      status: 'active' | 'pending'
-    }
-  >()
-
-  for (const membershipDoc of membershipsSnapshot.docs) {
-    const groupRef = membershipDoc.ref.parent.parent
-    if (!groupRef) continue
-
-    const data = membershipDoc.data()
-    const rawRole = data.role as string | undefined
-    const rawStatus = data.status as string | undefined
-
-    membershipByGroupId.set(groupRef.id, {
-      role: rawRole === 'owner' || rawRole === 'admin' ? rawRole : 'member',
-      status: rawStatus === 'pending' ? 'pending' : 'active',
-    })
+    return groups.sort((a, b) => a.name.localeCompare(b.name))
+  } catch (error) {
+    console.warn('Callable getMyGroups failed; returning empty group list as fallback.', error)
+    return []
   }
-
-  const ownerGroupIds = new Set(ownerGroupsSnapshot.docs.map((groupDoc) => groupDoc.id))
-  const membershipGroupIds = new Set(membershipByGroupId.keys())
-  const groupIds = Array.from(new Set([...ownerGroupIds, ...membershipGroupIds]))
-
-  const groupSnapshots = await Promise.all(groupIds.map((groupId) => getDoc(doc(db, 'groups', groupId))))
-
-  for (let index = 0; index < groupIds.length; index += 1) {
-    const groupId = groupIds[index]
-    const snapshot = groupSnapshots[index]
-    if (!snapshot.exists()) continue
-
-    const groupData = snapshot.data()
-    const name = (groupData.name as string | undefined) ?? groupId
-    const joinCode = (groupData.joinCode as string | undefined) ?? ''
-    const ownerUid = (groupData.ownerUid as string | undefined) ?? ''
-    const membership = membershipByGroupId.get(groupId)
-
-    if (ownerUid === uid || ownerGroupIds.has(groupId)) {
-      groupsById.set(groupId, {
-        id: groupId,
-        name,
-        joinCode,
-        role: 'owner',
-        status: 'active',
-      })
-      continue
-    }
-
-    if (!membership) continue
-
-    groupsById.set(groupId, {
-      id: groupId,
-      name,
-      joinCode,
-      role: membership.role,
-      status: membership.status,
-    })
-  }
-
-  return Array.from(groupsById.values()).sort((a, b) => a.name.localeCompare(b.name))
 }
 
 type RequestGroupAccessRequest = {
@@ -213,7 +165,14 @@ async function fetchGroupSummaryForUser(uid: string, groupId: string): Promise<G
 
 async function backfillOwnerMemberships(uid: string, profileData: UserProfile | null): Promise<boolean> {
   const ownerGroupsQuery = query(collection(db, 'groups'), where('ownerUid', '==', uid))
-  const ownerGroupsSnapshot = await getDocs(ownerGroupsQuery)
+  let ownerGroupsSnapshot
+
+  try {
+    ownerGroupsSnapshot = await getDocs(ownerGroupsQuery)
+  } catch (error) {
+    console.warn('Owner membership backfill skipped due to permission error.', error)
+    return false
+  }
 
   let changed = false
   const displayName = profileData?.displayName ?? 'F1 Player'
@@ -275,13 +234,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [loading, setLoading] = useState(true)
 
   const loadGroupsAndSelection = useCallback(async (uid: string, profileData: UserProfile | null) => {
-    let memberships = await fetchGroupsForUser(uid)
+    let memberships = await fetchGroupsForUser()
     const preferredGroupId = profileData?.activeGroupId ?? null
 
     // Self-heal legacy/incomplete group ownership links so owners are not stranded on /groups.
     const didRepair = await backfillOwnerMemberships(uid, profileData)
     if (didRepair) {
-      memberships = await fetchGroupsForUser(uid)
+      memberships = await fetchGroupsForUser()
     }
 
     if (preferredGroupId && !memberships.some((group) => group.id === preferredGroupId)) {
