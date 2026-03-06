@@ -265,17 +265,21 @@ async function fetchPicksBootstrap(uid: string, groupId: string, selectedRaceId?
   const pickId = `${seasonId}_${race.id}_${groupId}_${uid}`
   const [pickSnapshot, picksByUserSnapshot, recentResultsSnapshot] = await Promise.all([
     getDoc(doc(db, 'picks', pickId)),
-    getDocs(query(collection(db, 'picks'), where('uid', '==', uid))),
+    getDocs(
+      query(
+        collection(db, 'picks'),
+        where('uid', '==', uid),
+        where('groupId', '==', groupId),
+        where('seasonId', '==', seasonId),
+      ),
+    ),
     getDocs(query(collection(db, 'results'), where('seasonId', '==', seasonId))),
   ])
 
   const wildcardUsedRaceId =
     picksByUserSnapshot.docs
       .map((row) => row.data())
-      .find(
-        (row) =>
-          row.seasonId === seasonId && row.groupId === groupId && row.uid === uid && row.wildcard === true,
-      )?.raceId ?? null
+      .find((row) => row.uid === uid && row.wildcard === true)?.raceId ?? null
 
   const recentResults = recentResultsSnapshot.docs
     .map((row) => {
