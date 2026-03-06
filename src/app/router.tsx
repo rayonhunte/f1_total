@@ -6,6 +6,7 @@ import { RequireGroupAdmin } from '../components/RequireGroupAdmin'
 import { AdminPage } from '../pages/AdminPage'
 import { DashboardPage } from '../pages/DashboardPage'
 import { GroupsPage } from '../pages/GroupsPage'
+import { HowToUsePage } from '../pages/HowToUsePage'
 import { LandingPage } from '../pages/LandingPage'
 import { LeaderboardPage } from '../pages/LeaderboardPage'
 import { LoginPage } from '../pages/LoginPage'
@@ -27,6 +28,10 @@ export const router = createBrowserRouter([
         <GroupsPage />
       </RequireAuth>
     ),
+  },
+  {
+    path: '/how-to-use',
+    element: <HowToUsePage />,
   },
   {
     path: '/app',

@@ -8,6 +8,7 @@ const baseLinks = [
   { to: '/app', label: 'Dashboard' },
   { to: '/app/picks', label: 'Picks' },
   { to: '/app/leaderboard', label: 'Leaderboard' },
+  { to: '/how-to-use', label: 'How To Use' },
 ]
 
 export function AppLayout() {

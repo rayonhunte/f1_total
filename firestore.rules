@@ -76,7 +76,8 @@ service cloud.firestore {
     }
 
     match /groups/{groupId} {
-      allow read: if signedIn();
+      allow read: if signedIn() &&
+        (resource.data.ownerUid == request.auth.uid || memberExists(groupId));
       allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
       allow update, delete: if isAdmin() || isGroupOwner(groupId);
 
@@ -101,12 +102,42 @@ service cloud.firestore {
           (
             isGroupAdmin(groupId) &&
             resource.data.status == 'pending' &&
-            request.resource.data.status == 'active'
+            request.resource.data.uid == resource.data.uid &&
+            request.resource.data.displayName == resource.data.displayName &&
+            request.resource.data.email == resource.data.email &&
+            request.resource.data.role == 'member' &&
+            request.resource.data.status == 'active' &&
+            request.resource.data.keys().hasOnly([
+              'uid',
+              'displayName',
+              'email',
+              'role',
+              'status',
+              'requestedAt',
+              'approvedAt',
+              'approvedBy',
+              'joinedAt'
+            ])
           ) ||
           (
             isGroupOwner(groupId) &&
             resource.data.status == 'active' &&
-            request.resource.data.status == 'active'
+            request.resource.data.uid == resource.data.uid &&
+            request.resource.data.displayName == resource.data.displayName &&
+            request.resource.data.email == resource.data.email &&
+            request.resource.data.status == 'active' &&
+            (request.resource.data.role == 'member' || request.resource.data.role == 'admin') &&
+            request.resource.data.keys().hasOnly([
+              'uid',
+              'displayName',
+              'email',
+              'role',
+              'status',
+              'joinedAt',
+              'approvedAt',
+              'approvedBy',
+              'updatedAt'
+            ])
           );
 
         allow delete: if isAdmin() || isGroupOwner(groupId);
@@ -174,6 +205,22 @@ service cloud.firestore {
         isGroupActiveMember(resource.data.groupId)
       );
       allow list: if signedIn() && isGroupActiveMember(resource.data.groupId);
+      allow write: if isAdmin();
+    }
+
+    match /notificationPrefs/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /notifications/{notificationId} {
+      allow create: if signedIn();
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow update: if signedIn() && resource.data.uid == request.auth.uid;
+      allow delete: if false;
+    }
+
+    match /weeklyRecaps/{recapId} {
+      allow read: if signedIn();
       allow write: if isAdmin();
     }
 

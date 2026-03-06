@@ -48,6 +48,9 @@ export function LandingPage() {
             <Link to="/groups" className="landing-btn secondary">
               Join Or Create Group
             </Link>
+            <Link to="/how-to-use" className="landing-btn secondary">
+              How To Use
+            </Link>
           </div>
         </div>
       </header>

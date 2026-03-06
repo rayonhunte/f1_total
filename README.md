@@ -29,6 +29,11 @@ npm run functions:build
 - `/leaderboard`: group-scoped leaderboard
 - `/admin`: group admin/owner tools (invite link, approve requests, promote admins)
 
+## How To Use Guide
+
+- In-app guide route: `/how-to-use`
+- The guide documents all implemented gameplay/admin features and excludes private mini-leagues.
+
 ## Group Access Model
 
 - Group creator becomes `owner` automatically.

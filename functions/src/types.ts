@@ -17,6 +17,13 @@ export type ScoringRules = {
     enabled: boolean
     value: number
   }
+  captainMultiplier?: number
+  wildcardMultiplier?: number
+  budgetMode?: {
+    enabled: boolean
+    cap: number
+    requireSingleConstructor: boolean
+  }
 }
 
 export type SeasonDoc = {
@@ -51,6 +58,9 @@ export type PickDoc = {
     p3: string
   }
   constructors: string[]
+  captainDriverId?: string
+  wildcard?: boolean
+  budgetCost?: number
 }
 
 export type DriverResult = {
@@ -83,5 +93,32 @@ export type ScoreDoc = {
   seasonId: string
   totalPoints: number
   byRace: Record<string, number>
+  detailByRace?: Record<
+    string,
+    {
+      basePoints: number
+      captainBonus: number
+      wildcardBonus: number
+      totalPoints: number
+    }
+  >
+  wildcardRaceId?: string
   lastUpdatedAt: string
+}
+
+export type PickScoreBreakdown = {
+  basePoints: number
+  captainBonus: number
+  wildcardBonus: number
+  totalPoints: number
+}
+
+export type WeeklyRecap = {
+  seasonId: string
+  groupId: string
+  raceId: string
+  biggestMover: { uid: string; displayName: string; rankDelta: number } | null
+  bestPick: { uid: string; displayName: string; pointsDelta: number } | null
+  worstMiss: { uid: string; displayName: string; pointsDelta: number } | null
+  closestPodiumGuess: { uid: string; displayName: string; matches: number } | null
 }

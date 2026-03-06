@@ -11,8 +11,16 @@ import {
   fetchSeasonDrivers,
   isDnfStatus,
 } from './jolpi'
-import { calculatePickScore, mergeScoringRules } from './scoring'
-import type { PickDoc, RaceDoc, RaceResultDoc, ScoreDoc, ScoringRules, SeasonDoc } from './types'
+import { calculatePickScoreBreakdown, mergeScoringRules } from './scoring'
+import type {
+  PickDoc,
+  RaceDoc,
+  RaceResultDoc,
+  ScoreDoc,
+  ScoringRules,
+  SeasonDoc,
+  WeeklyRecap,
+} from './types'
 
 initializeApp()
 const db = getFirestore()
@@ -42,6 +50,38 @@ type LiveRosterRequest = {
 type UpdateSeasonScoringRulesRequest = {
   seasonId?: string
   scoringRules?: Partial<ScoringRules>
+}
+
+type SimulateScoringRequest = {
+  seasonId?: string
+  scoringRules?: Partial<ScoringRules>
+}
+
+type GetWeeklyRecapRequest = {
+  seasonId?: string
+  groupId?: string
+  raceId?: string
+}
+
+type NotificationPreferenceRequest = {
+  emailEnabled?: boolean
+  pushEnabled?: boolean
+  lockReminderMinutesBefore?: number
+}
+
+type GetSeasonAwardsRequest = {
+  seasonId?: string
+  groupId?: string
+}
+
+type RequestGroupAccessRequest = {
+  groupId?: string
+  joinCode?: string
+}
+
+type RequestGroupAccessResponse = {
+  groupId: string
+  status: 'active' | 'pending'
 }
 
 type ConstructorSeed = {
@@ -153,6 +193,11 @@ function parseScoringRulesInput(raw: unknown): ScoringRules {
       ? (input.dnfPenalty as Record<string, unknown>)
       : {}
 
+  const budgetInput =
+    input.budgetMode && typeof input.budgetMode === 'object' && !Array.isArray(input.budgetMode)
+      ? (input.budgetMode as Record<string, unknown>)
+      : {}
+
   const constructorMode = input.constructorPointsMode
   if (constructorMode !== 'official' && constructorMode !== 'custom') {
     throw new HttpsError(
@@ -202,6 +247,19 @@ function parseScoringRulesInput(raw: unknown): ScoringRules {
     dnfPenalty: {
       enabled: dnfInput.enabled === true,
       value: parseNonNegativeNumber(dnfInput.value ?? 0, 'scoringRules.dnfPenalty.value'),
+    },
+    captainMultiplier: parseNonNegativeNumber(
+      input.captainMultiplier ?? 1.5,
+      'scoringRules.captainMultiplier',
+    ),
+    wildcardMultiplier: parseNonNegativeNumber(
+      input.wildcardMultiplier ?? 2,
+      'scoringRules.wildcardMultiplier',
+    ),
+    budgetMode: {
+      enabled: budgetInput.enabled === true,
+      cap: parseNonNegativeNumber(budgetInput.cap ?? 100, 'scoringRules.budgetMode.cap'),
+      requireSingleConstructor: budgetInput.requireSingleConstructor !== false,
     },
   })
 }
@@ -557,6 +615,139 @@ async function rebuildLeaderboard(seasonId: string, raceId: string, groupId: str
   )
 }
 
+async function createNotification(
+  uid: string,
+  type: string,
+  title: string,
+  body: string,
+  data?: Record<string, unknown>,
+): Promise<void> {
+  const notificationRef = db.collection('notifications').doc()
+  await notificationRef.set({
+    uid,
+    type,
+    title,
+    body,
+    data: data ?? {},
+    createdAt: FieldValue.serverTimestamp(),
+    readAt: null,
+  })
+}
+
+async function buildWeeklyRecap(seasonId: string, groupId: string, raceId: string): Promise<WeeklyRecap | null> {
+  const [leaderboardSnap, resultSnap, picksSnap] = await Promise.all([
+    db.collection('leaderboards').doc(`${seasonId}_${groupId}`).get(),
+    db.collection('results').doc(raceId).get(),
+    db.collection('picks').where('seasonId', '==', seasonId).where('groupId', '==', groupId).where('raceId', '==', raceId).get(),
+  ])
+
+  if (!leaderboardSnap.exists || !resultSnap.exists) return null
+
+  const leaderboardData = leaderboardSnap.data() ?? {}
+  const entries = Array.isArray(leaderboardData.entries)
+    ? (leaderboardData.entries as Array<{
+        uid: string
+        displayName: string
+        rankDelta: number
+        pointsDelta: number
+      }>)
+    : []
+
+  const biggestMover =
+    entries.length > 0
+      ? entries.slice().sort((a, b) => b.rankDelta - a.rankDelta)[0]
+      : null
+
+  const bestPick = entries.length > 0 ? entries.slice().sort((a, b) => b.pointsDelta - a.pointsDelta)[0] : null
+  const worstMiss = entries.length > 0 ? entries.slice().sort((a, b) => a.pointsDelta - b.pointsDelta)[0] : null
+
+  const result = resultSnap.data() as RaceResultDoc
+  const podium = result.podium
+
+  const closest = picksSnap.docs
+    .map((pickDoc) => {
+      const pick = pickDoc.data() as PickDoc
+      const matches =
+        Number(pick.podium.p1 === podium[0]) + Number(pick.podium.p2 === podium[1]) + Number(pick.podium.p3 === podium[2])
+
+      const row = entries.find((entry) => entry.uid === pick.uid)
+      return {
+        uid: pick.uid,
+        displayName: row?.displayName ?? pick.uid,
+        matches,
+      }
+    })
+    .sort((a, b) => b.matches - a.matches)
+
+  const recap: WeeklyRecap = {
+    seasonId,
+    groupId,
+    raceId,
+    biggestMover: biggestMover
+      ? {
+          uid: biggestMover.uid,
+          displayName: biggestMover.displayName,
+          rankDelta: biggestMover.rankDelta,
+        }
+      : null,
+    bestPick: bestPick
+      ? {
+          uid: bestPick.uid,
+          displayName: bestPick.displayName,
+          pointsDelta: bestPick.pointsDelta,
+        }
+      : null,
+    worstMiss: worstMiss
+      ? {
+          uid: worstMiss.uid,
+          displayName: worstMiss.displayName,
+          pointsDelta: worstMiss.pointsDelta,
+        }
+      : null,
+    closestPodiumGuess: closest[0]
+      ? {
+          uid: closest[0].uid,
+          displayName: closest[0].displayName,
+          matches: closest[0].matches,
+        }
+      : null,
+  }
+
+  await db.collection('weeklyRecaps').doc(`${seasonId}_${groupId}_${raceId}`).set(
+    {
+      ...recap,
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  )
+
+  return recap
+}
+
+async function notifyScoreUpdates(seasonId: string, groupId: string, raceId: string): Promise<void> {
+  const leaderboardSnap = await db.collection('leaderboards').doc(`${seasonId}_${groupId}`).get()
+  if (!leaderboardSnap.exists) return
+
+  const entries = (leaderboardSnap.data()?.entries ?? []) as Array<{
+    uid: string
+    displayName: string
+    pointsDelta: number
+    rank: number
+  }>
+
+  await Promise.all(
+    entries.map((entry) =>
+      createNotification(
+        entry.uid,
+        'score_update',
+        'Race scored',
+        `You earned ${entry.pointsDelta} points in ${raceId}. Current rank: #${entry.rank}.`,
+        { seasonId, groupId, raceId, pointsDelta: entry.pointsDelta, rank: entry.rank },
+      ),
+    ),
+  )
+}
+
 async function recomputeRaceScores(seasonId: string, raceId: string, result: RaceResultDoc): Promise<number> {
   const season = await getSeason(seasonId)
   const rules = mergeScoringRules(season.scoringRules)
@@ -575,14 +766,45 @@ async function recomputeRaceScores(seasonId: string, raceId: string, result: Rac
 
     groupIdsTouched.add(pick.groupId)
 
-    const racePoints = calculatePickScore(pick, result, rules)
     const scoreRef = db.collection('scores').doc(`${seasonId}_${pick.groupId}_${pick.uid}`)
     const scoreSnap = await scoreRef.get()
+    const existingData = (scoreSnap.data() ?? {}) as ScoreDoc
+    const existingWildcardRaceId = existingData.wildcardRaceId
 
-    const existingByRace = (scoreSnap.data()?.byRace ?? {}) as Record<string, number>
+    let applyWildcard = false
+    let wildcardRaceId = existingWildcardRaceId
+
+    if (pick.wildcard) {
+      if (existingWildcardRaceId) {
+        applyWildcard = existingWildcardRaceId === raceId
+      } else {
+        applyWildcard = true
+        wildcardRaceId = raceId
+      }
+    }
+
+    const breakdown = calculatePickScoreBreakdown(pick, result, rules, applyWildcard)
+
+    const existingByRace = (existingData.byRace ?? {}) as Record<string, number>
+    const existingDetailByRace =
+      (existingData.detailByRace ?? {}) as Record<
+        string,
+        {
+          basePoints: number
+          captainBonus: number
+          wildcardBonus: number
+          totalPoints: number
+        }
+      >
+
     const byRace = {
       ...existingByRace,
-      [raceId]: racePoints,
+      [raceId]: breakdown.totalPoints,
+    }
+
+    const detailByRace = {
+      ...existingDetailByRace,
+      [raceId]: breakdown,
     }
 
     const totalPoints = Object.values(byRace).reduce((sum, value) => sum + value, 0)
@@ -594,6 +816,8 @@ async function recomputeRaceScores(seasonId: string, raceId: string, result: Rac
         seasonId,
         totalPoints,
         byRace,
+        detailByRace,
+        wildcardRaceId: wildcardRaceId ?? null,
         lastUpdatedAt: new Date().toISOString(),
       },
       { merge: true },
@@ -602,6 +826,8 @@ async function recomputeRaceScores(seasonId: string, raceId: string, result: Rac
 
   for (const groupId of groupIdsTouched) {
     await rebuildLeaderboard(seasonId, raceId, groupId)
+    await buildWeeklyRecap(seasonId, groupId, raceId)
+    await notifyScoreUpdates(seasonId, groupId, raceId)
   }
 
   return picksSnapshot.size
@@ -854,6 +1080,396 @@ export const getLiveRoster = onCall(
         'internal',
         error instanceof Error ? error.message : 'Failed to fetch live roster.',
       )
+    }
+  },
+)
+
+export const requestGroupAccess = onCall(
+  {
+    region: 'us-central1',
+  },
+  async (request): Promise<RequestGroupAccessResponse> => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication is required.')
+    }
+
+    const data = (request.data ?? {}) as RequestGroupAccessRequest
+    const groupId = data.groupId?.trim() ?? ''
+    const joinCode = data.joinCode?.trim().toUpperCase() ?? ''
+
+    if (!groupId) {
+      throw new HttpsError('invalid-argument', 'Group id is required.')
+    }
+
+    if (!joinCode) {
+      throw new HttpsError('invalid-argument', 'Join code is required.')
+    }
+
+    const uid = request.auth.uid
+    const groupRef = db.collection('groups').doc(groupId)
+    const groupSnapshot = await groupRef.get()
+
+    if (!groupSnapshot.exists) {
+      throw new HttpsError('not-found', 'Selected group was not found.')
+    }
+
+    const groupData = groupSnapshot.data() ?? {}
+    const storedCode = String(groupData.joinCode ?? '').trim().toUpperCase()
+    if (!storedCode || storedCode !== joinCode) {
+      throw new HttpsError('permission-denied', 'Invite code does not match the selected group.')
+    }
+
+    const memberRef = groupRef.collection('members').doc(uid)
+    const memberSnapshot = await memberRef.get()
+    if (memberSnapshot.exists) {
+      const status = String(memberSnapshot.data()?.status ?? 'pending') === 'active' ? 'active' : 'pending'
+
+      if (status === 'active') {
+        await db
+          .collection('users')
+          .doc(uid)
+          .set(
+            {
+              activeGroupId: groupId,
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          )
+      }
+
+      return {
+        groupId,
+        status,
+      }
+    }
+
+    const ownerUid = String(groupData.ownerUid ?? '')
+    const displayName = String(request.auth.token.name ?? '').trim()
+    const email = String(request.auth.token.email ?? '').trim()
+
+    if (ownerUid && ownerUid === uid) {
+      await memberRef.set(
+        {
+          uid,
+          displayName: displayName || 'F1 Player',
+          email,
+          role: 'owner',
+          status: 'active',
+          approvedAt: FieldValue.serverTimestamp(),
+          joinedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      )
+
+      await db
+        .collection('users')
+        .doc(uid)
+        .set(
+          {
+            activeGroupId: groupId,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        )
+
+      return {
+        groupId,
+        status: 'active',
+      }
+    }
+
+    await memberRef.set(
+      {
+        uid,
+        displayName: displayName || 'F1 Player',
+        email,
+        role: 'member',
+        status: 'pending',
+        requestedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    )
+
+    return {
+      groupId,
+      status: 'pending',
+    }
+  },
+)
+
+export const getWeeklyRecap = onCall(
+  {
+    region: 'us-central1',
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication is required.')
+    }
+
+    const data = (request.data ?? {}) as GetWeeklyRecapRequest
+    const seasonId = data.seasonId?.trim() || (await findActiveSeasonId())
+    const groupId = data.groupId?.trim()
+    if (!groupId) {
+      throw new HttpsError('invalid-argument', 'groupId is required.')
+    }
+
+    const memberSnap = await db.collection('groups').doc(groupId).collection('members').doc(request.auth.uid).get()
+    const isAdmin = request.auth.token.role === 'admin'
+    if (!isAdmin && (!memberSnap.exists || memberSnap.data()?.status !== 'active')) {
+      throw new HttpsError('permission-denied', 'Active group membership is required.')
+    }
+
+    const raceId =
+      data.raceId?.trim() ||
+      String((await db.collection('leaderboards').doc(`${seasonId}_${groupId}`).get()).data()?.lastRaceId ?? '')
+
+    if (!raceId) {
+      throw new HttpsError('not-found', 'No scored race found for this group yet.')
+    }
+
+    const recap = await buildWeeklyRecap(seasonId, groupId, raceId)
+    if (!recap) {
+      throw new HttpsError('not-found', 'Weekly recap not available for this race.')
+    }
+
+    return recap
+  },
+)
+
+export const saveNotificationPreferences = onCall(
+  {
+    region: 'us-central1',
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication is required.')
+    }
+
+    const data = (request.data ?? {}) as NotificationPreferenceRequest
+    await db.collection('notificationPrefs').doc(request.auth.uid).set(
+      {
+        uid: request.auth.uid,
+        emailEnabled: data.emailEnabled !== false,
+        pushEnabled: data.pushEnabled !== false,
+        lockReminderMinutesBefore: Number.isFinite(Number(data.lockReminderMinutesBefore))
+          ? Number(data.lockReminderMinutesBefore)
+          : 60,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    )
+
+    return { ok: true }
+  },
+)
+
+export const getSeasonAwards = onCall(
+  {
+    region: 'us-central1',
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication is required.')
+    }
+
+    const data = (request.data ?? {}) as GetSeasonAwardsRequest
+    const seasonId = data.seasonId?.trim() || (await findActiveSeasonId())
+    const groupId = data.groupId?.trim()
+    if (!groupId) {
+      throw new HttpsError('invalid-argument', 'groupId is required.')
+    }
+
+    const [picksSnap, resultsSnap, leaderboardSnap] = await Promise.all([
+      db.collection('picks').where('seasonId', '==', seasonId).where('groupId', '==', groupId).get(),
+      db.collection('results').where('seasonId', '==', seasonId).get(),
+      db.collection('leaderboards').doc(`${seasonId}_${groupId}`).get(),
+    ])
+
+    const resultByRace = new Map<string, RaceResultDoc>()
+    for (const row of resultsSnap.docs) {
+      resultByRace.set(row.id, row.data() as RaceResultDoc)
+    }
+
+    const accuracy = new Map<string, number>()
+    for (const row of picksSnap.docs) {
+      const pick = row.data() as PickDoc
+      const result = resultByRace.get(pick.raceId)
+      if (!result) continue
+
+      const matches =
+        Number(pick.podium.p1 === result.podium[0]) + Number(pick.podium.p2 === result.podium[1]) + Number(pick.podium.p3 === result.podium[2])
+      accuracy.set(pick.uid, (accuracy.get(pick.uid) ?? 0) + matches)
+    }
+
+    const scoresSnap = await db.collection('scores').where('seasonId', '==', seasonId).where('groupId', '==', groupId).get()
+    const scoreRows = scoresSnap.docs.map((row) => row.data() as ScoreDoc)
+
+    const riskRows = scoreRows
+      .map((row) => {
+        const values = Object.values(row.byRace ?? {})
+        if (values.length === 0) return { uid: row.uid, volatility: 0 }
+        const mean = values.reduce((sum, value) => sum + value, 0) / values.length
+        const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length
+        return { uid: row.uid, volatility: Math.sqrt(variance) }
+      })
+      .sort((a, b) => b.volatility - a.volatility)
+
+    const leaderboardEntries = (leaderboardSnap.data()?.entries ?? []) as Array<{
+      uid: string
+      displayName: string
+      rankDelta: number
+    }>
+
+    const accurateWinner = Array.from(accuracy.entries()).sort((a, b) => b[1] - a[1])[0]
+    const riskWinner = riskRows[0]
+    const comebackWinner = leaderboardEntries.slice().sort((a, b) => b.rankDelta - a.rankDelta)[0]
+
+    return {
+      seasonId,
+      groupId,
+      mostAccurate: accurateWinner ? { uid: accurateWinner[0], score: accurateWinner[1] } : null,
+      riskTaker: riskWinner ? { uid: riskWinner.uid, volatility: Math.round(riskWinner.volatility * 100) / 100 } : null,
+      comebackOfTheYear: comebackWinner
+        ? {
+            uid: comebackWinner.uid,
+            displayName: comebackWinner.displayName,
+            rankDelta: comebackWinner.rankDelta,
+          }
+        : null,
+    }
+  },
+)
+
+export const simulateSeasonScoring = onCall(
+  {
+    region: 'us-central1',
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication is required.')
+    }
+
+    const isAdmin = request.auth.token.role === 'admin'
+    if (!isAdmin) {
+      throw new HttpsError('permission-denied', 'Admin role is required.')
+    }
+
+    const data = (request.data ?? {}) as SimulateScoringRequest
+    const seasonId = data.seasonId?.trim() || (await findActiveSeasonId())
+    const rules = parseScoringRulesInput(data.scoringRules)
+
+    const [resultsSnap, picksSnap, currentScoresSnap] = await Promise.all([
+      db.collection('results').where('seasonId', '==', seasonId).get(),
+      db.collection('picks').where('seasonId', '==', seasonId).get(),
+      db.collection('scores').where('seasonId', '==', seasonId).get(),
+    ])
+
+    const resultByRace = new Map<string, RaceResultDoc>()
+    for (const row of resultsSnap.docs) {
+      resultByRace.set(row.id, row.data() as RaceResultDoc)
+    }
+
+    const raceOrder = Array.from(resultByRace.values()).sort((a, b) => a.round - b.round).map((row) => row.raceId)
+    const raceIndex = new Map(raceOrder.map((raceId, index) => [raceId, index]))
+
+    const pointsByUserGroup = new Map<string, number>()
+    const wildcardByUserGroup = new Map<string, string>()
+
+    const orderedPicks = picksSnap.docs
+      .map((row) => row.data() as PickDoc)
+      .filter((pick) => resultByRace.has(pick.raceId))
+      .sort((a, b) => (raceIndex.get(a.raceId) ?? 0) - (raceIndex.get(b.raceId) ?? 0))
+
+    for (const pick of orderedPicks) {
+      const result = resultByRace.get(pick.raceId)
+      if (!result) continue
+
+      const key = `${pick.groupId}::${pick.uid}`
+      const wildcardRaceId = wildcardByUserGroup.get(key)
+      const applyWildcard = pick.wildcard === true && (!wildcardRaceId || wildcardRaceId === pick.raceId)
+      if (applyWildcard && !wildcardRaceId) {
+        wildcardByUserGroup.set(key, pick.raceId)
+      }
+
+      const breakdown = calculatePickScoreBreakdown(pick, result, rules, applyWildcard)
+      pointsByUserGroup.set(key, (pointsByUserGroup.get(key) ?? 0) + breakdown.totalPoints)
+    }
+
+    const currentByUserGroup = new Map<string, number>()
+    for (const row of currentScoresSnap.docs) {
+      const score = row.data() as ScoreDoc
+      currentByUserGroup.set(`${score.groupId}::${score.uid}`, score.totalPoints)
+    }
+
+    const rows = Array.from(pointsByUserGroup.entries())
+      .map(([key, simulatedTotal]) => {
+        const currentTotal = currentByUserGroup.get(key) ?? 0
+        const delimiterIndex = key.indexOf('::')
+        const groupId = delimiterIndex >= 0 ? key.slice(0, delimiterIndex) : key
+        const uid = delimiterIndex >= 0 ? key.slice(delimiterIndex + 2) : ''
+        return {
+          groupId,
+          uid,
+          currentTotal,
+          simulatedTotal,
+          delta: simulatedTotal - currentTotal,
+        }
+      })
+      .sort((a, b) => b.delta - a.delta)
+
+    return {
+      seasonId,
+      sampleSize: rows.length,
+      topGainers: rows.slice(0, 25),
+      topLosers: rows.slice(-25),
+    }
+  },
+)
+
+export const sendLockReminderNotifications = onSchedule(
+  {
+    schedule: 'every 30 minutes',
+    region: 'us-central1',
+    timeZone: 'America/New_York',
+  },
+  async () => {
+    const now = new Date()
+    const activeSeasonId = await findActiveSeasonId()
+
+    const racesSnap = await db.collection('races').where('seasonId', '==', activeSeasonId).get()
+    const upcoming = racesSnap.docs
+      .map((row) => ({ id: row.id, race: row.data() as RaceDoc }))
+      .filter((row) => {
+        const lockAt = timestampToDate(row.race.lockAt) ?? timestampToDate(row.race.raceStartAt)
+        if (!lockAt) return false
+        const diffMinutes = (lockAt.getTime() - now.getTime()) / 60_000
+        return diffMinutes > 0 && diffMinutes <= 60 && (row.race.status ?? 'scheduled') === 'scheduled'
+      })
+
+    if (upcoming.length === 0) return
+
+    const membersSnap = await db.collectionGroup('members').where('status', '==', 'active').get()
+    const uidSet = new Set(membersSnap.docs.map((row) => String(row.data().uid || row.id)))
+
+    for (const race of upcoming) {
+      for (const uid of uidSet) {
+        const docId = `lock_${uid}_${race.id}`
+        await db.collection('notifications').doc(docId).set(
+          {
+            uid,
+            type: 'lock_reminder',
+            title: 'Race lock reminder',
+            body: `${race.race.name} locks within 60 minutes. Submit picks now.`,
+            data: {
+              raceId: race.id,
+              seasonId: activeSeasonId,
+            },
+            createdAt: FieldValue.serverTimestamp(),
+            readAt: null,
+          },
+          { merge: true },
+        )
+      }
     }
   },
 )

@@ -1,10 +1,9 @@
 import { type FormEvent, useEffect, useState } from 'react'
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore'
+import { doc, getDoc } from 'firebase/firestore'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth/useAuth'
 import { ThemeToggle } from '../components/ThemeToggle'
 import { db } from '../lib/firebase'
-import { useQuery } from '@tanstack/react-query'
 import { signOut } from 'firebase/auth'
 import { auth } from '../lib/firebase'
 
@@ -36,22 +35,6 @@ export function GroupsPage() {
       setNotice('Invite code detected. Submit to request group access.')
     }
   }, [searchParams])
-
-  const availableGroupsQuery = useQuery({
-    queryKey: ['all-groups-for-invite'],
-    queryFn: async () => {
-      const snapshot = await getDocs(collection(db, 'groups'))
-      return snapshot.docs
-        .map((item) => {
-          const data = item.data()
-          return {
-            id: item.id,
-            name: (data.name as string | undefined) ?? item.id,
-          }
-        })
-        .sort((a, b) => a.name.localeCompare(b.name))
-    },
-  })
 
   const activeMemberships = groups.filter((group) => group.status === 'active')
   const pendingMemberships = groups.filter((group) => group.status === 'pending')
@@ -150,9 +133,7 @@ export function GroupsPage() {
                 <li key={group.id}>
                   <div>
                     <strong>{group.name}</strong>
-                    <p>
-                      Role: {group.role} | Join code: {group.joinCode || 'N/A'}
-                    </p>
+                    <p>Role: {group.role}</p>
                   </div>
                   <button
                     type="button"
@@ -204,22 +185,16 @@ export function GroupsPage() {
 
           <div className="admin-card">
             <h3>Request to Join</h3>
-            <p>Select a group first, then enter its invite code.</p>
+            <p>Enter the group id and invite code from your admin's invite link.</p>
             <form className="auth-form" onSubmit={handleJoinGroup}>
               <label>
-                Group
-                <select
+                Group id
+                <input
+                  type="text"
                   value={targetGroupId}
                   onChange={(event) => setTargetGroupId(event.target.value)}
                   required
-                >
-                  <option value="">Select group</option>
-                  {(availableGroupsQuery.data ?? []).map((group) => (
-                    <option key={group.id} value={group.id}>
-                      {group.name}
-                    </option>
-                  ))}
-                </select>
+                />
               </label>
               <label>
                 Invite code
@@ -230,7 +205,7 @@ export function GroupsPage() {
                   required
                 />
               </label>
-              <button type="submit" disabled={saving || availableGroupsQuery.isLoading}>
+              <button type="submit" disabled={saving}>
                 {saving ? 'Saving...' : 'Request Access'}
               </button>
             </form>
