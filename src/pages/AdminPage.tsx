@@ -1067,7 +1067,6 @@ export function AdminPage() {
                     <option value="no">No</option>
                   </select>
                 </label>
-
                 {scoringRulesForm.constructorPointsMode === 'custom' ? (
                   <>
                     <h4>Custom Constructor Points</h4>
