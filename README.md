@@ -59,7 +59,7 @@ Required repository secret:
 
 - `FIREBASE_SERVICE_ACCOUNT_F1TOTAL_C37F3`: JSON key for a service account that can deploy Firebase Hosting, Functions, and Firestore rules for project `f1total-c37f3`.
 
-Required repository variables:
+Required repository settings (Secrets or Variables):
 
 - `FIREBASE_PROJECT_ID`
 - `VITE_FIREBASE_API_KEY`
