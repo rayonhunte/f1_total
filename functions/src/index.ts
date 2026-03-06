@@ -84,6 +84,15 @@ type RequestGroupAccessResponse = {
   status: 'active' | 'pending'
 }
 
+type GetMyGroupsResponse = {
+  groups: Array<{
+    id: string
+    name: string
+    joinCode: string
+    role: 'owner' | 'admin' | 'member'
+    status: 'active' | 'pending'
+  }>
+}
 type ConstructorSeed = {
   id: string
   name: string
@@ -1197,6 +1206,79 @@ export const requestGroupAccess = onCall(
   },
 )
 
+export const getMyGroups = onCall(
+  {
+    region: 'us-central1',
+  },
+  async (request): Promise<GetMyGroupsResponse> => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication is required.')
+    }
+
+    const uid = request.auth.uid
+    const groupsById = new Map<
+      string,
+      {
+        id: string
+        name: string
+        joinCode: string
+        role: 'owner' | 'admin' | 'member'
+        status: 'active' | 'pending'
+      }
+    >()
+
+    const [ownerGroupsSnapshot, membershipSnapshot] = await Promise.all([
+      db.collection('groups').where('ownerUid', '==', uid).get(),
+      db.collectionGroup('members').where('uid', '==', uid).get(),
+    ])
+
+    const groupIds = new Set<string>()
+    for (const groupDoc of ownerGroupsSnapshot.docs) {
+      groupIds.add(groupDoc.id)
+    }
+
+    const membershipByGroup = new Map<string, { role: 'owner' | 'admin' | 'member'; status: 'active' | 'pending' }>()
+    for (const memberDoc of membershipSnapshot.docs) {
+      const groupRef = memberDoc.ref.parent.parent
+      if (!groupRef) continue
+      groupIds.add(groupRef.id)
+
+      const data = memberDoc.data()
+      const rawRole = String(data.role ?? 'member')
+      const rawStatus = String(data.status ?? 'pending')
+      membershipByGroup.set(groupRef.id, {
+        role: rawRole === 'owner' || rawRole === 'admin' ? rawRole : 'member',
+        status: rawStatus === 'active' ? 'active' : 'pending',
+      })
+    }
+
+    const groupDocs = await Promise.all(Array.from(groupIds).map((groupId) => db.collection('groups').doc(groupId).get()))
+
+    for (const groupDoc of groupDocs) {
+      if (!groupDoc.exists) continue
+
+      const data = groupDoc.data() ?? {}
+      const ownerUid = String(data.ownerUid ?? '')
+      const membership = membershipByGroup.get(groupDoc.id)
+
+      const role: 'owner' | 'admin' | 'member' =
+        ownerUid === uid ? 'owner' : membership?.role ?? 'member'
+      const status: 'active' | 'pending' = ownerUid === uid ? 'active' : membership?.status ?? 'pending'
+
+      groupsById.set(groupDoc.id, {
+        id: groupDoc.id,
+        name: String(data.name ?? groupDoc.id),
+        joinCode: String(data.joinCode ?? ''),
+        role,
+        status,
+      })
+    }
+
+    return {
+      groups: Array.from(groupsById.values()).sort((a, b) => a.name.localeCompare(b.name)),
+    }
+  },
+)
 export const getWeeklyRecap = onCall(
   {
     region: 'us-central1',
