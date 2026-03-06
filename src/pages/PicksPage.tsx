@@ -74,7 +74,7 @@ const picksSchema = z
     p1: z.string().min(1, 'Select a driver for P1'),
     p2: z.string().min(1, 'Select a driver for P2'),
     p3: z.string().min(1, 'Select a driver for P3'),
-    constructors: z.array(z.string()).min(1, 'Choose at least one constructor').max(2, 'Choose up to two constructors'),
+    constructors: z.array(z.string()).max(2, 'Choose up to two constructors'),
   })
   .refine((values) => new Set([values.p1, values.p2, values.p3]).size === 3, {
     message: 'Each podium position must use a different driver.',
@@ -235,6 +235,11 @@ export function PicksPage() {
   const queryClient = useQueryClient()
   const [formError, setFormError] = useState<string | null>(null)
   const [selectedRaceId, setSelectedRaceId] = useState<string>('')
+  const [podiumSelections, setPodiumSelections] = useState<{ p1: string; p2: string; p3: string }>({
+    p1: '',
+    p2: '',
+    p3: '',
+  })
   const focusChipRef = useRef<HTMLButtonElement | null>(null)
 
   const bootstrapQuery = useQuery({
@@ -250,6 +255,20 @@ export function PicksPage() {
       setSelectedRaceId(currentRaceId)
     }
   }, [bootstrapQuery.data?.race.id, selectedRaceId])
+
+  useEffect(() => {
+    const existingPodium = bootstrapQuery.data?.existingPick?.podium
+    setPodiumSelections({
+      p1: existingPodium?.p1 ?? '',
+      p2: existingPodium?.p2 ?? '',
+      p3: existingPodium?.p3 ?? '',
+    })
+  }, [
+    bootstrapQuery.data?.race.id,
+    bootstrapQuery.data?.existingPick?.podium.p1,
+    bootstrapQuery.data?.existingPick?.podium.p2,
+    bootstrapQuery.data?.existingPick?.podium.p3,
+  ])
 
   const lockInfo = useMemo(() => {
     if (!bootstrapQuery.data?.race) {
@@ -377,6 +396,19 @@ export function PicksPage() {
     )
   }
 
+  const getDriverOptionsForSlot = (slot: 'p1' | 'p2' | 'p3') => {
+    const selectedForSlot = podiumSelections[slot]
+    const selectedInOtherSlots = new Set(
+      (Object.entries(podiumSelections) as Array<[keyof typeof podiumSelections, string]>)
+        .filter(([otherSlot, value]) => otherSlot !== slot && Boolean(value))
+        .map(([, value]) => value),
+    )
+
+    return data.drivers.filter(
+      (driver) => driver.id === selectedForSlot || !selectedInOtherSlots.has(driver.id),
+    )
+  }
+
   return (
     <section>
       <h2>Picks</h2>
@@ -449,9 +481,17 @@ export function PicksPage() {
         <div className="podium-grid">
           <label>
             P1
-            <select name="p1" defaultValue={data.existingPick?.podium.p1 ?? ''} disabled={lockInfo.isLocked}>
+            <select
+              name="p1"
+              value={podiumSelections.p1}
+              onChange={(event) => {
+                const nextValue = event.target.value
+                setPodiumSelections((current) => ({ ...current, p1: nextValue }))
+              }}
+              disabled={lockInfo.isLocked}
+            >
               <option value="">Select driver</option>
-              {data.drivers.map((driver) => (
+              {getDriverOptionsForSlot('p1').map((driver) => (
                 <option key={driver.id} value={driver.id}>
                   {driver.name} {driver.code ? `(${driver.code})` : ''}
                 </option>
@@ -461,9 +501,17 @@ export function PicksPage() {
 
           <label>
             P2
-            <select name="p2" defaultValue={data.existingPick?.podium.p2 ?? ''} disabled={lockInfo.isLocked}>
+            <select
+              name="p2"
+              value={podiumSelections.p2}
+              onChange={(event) => {
+                const nextValue = event.target.value
+                setPodiumSelections((current) => ({ ...current, p2: nextValue }))
+              }}
+              disabled={lockInfo.isLocked}
+            >
               <option value="">Select driver</option>
-              {data.drivers.map((driver) => (
+              {getDriverOptionsForSlot('p2').map((driver) => (
                 <option key={driver.id} value={driver.id}>
                   {driver.name} {driver.code ? `(${driver.code})` : ''}
                 </option>
@@ -473,9 +521,17 @@ export function PicksPage() {
 
           <label>
             P3
-            <select name="p3" defaultValue={data.existingPick?.podium.p3 ?? ''} disabled={lockInfo.isLocked}>
+            <select
+              name="p3"
+              value={podiumSelections.p3}
+              onChange={(event) => {
+                const nextValue = event.target.value
+                setPodiumSelections((current) => ({ ...current, p3: nextValue }))
+              }}
+              disabled={lockInfo.isLocked}
+            >
               <option value="">Select driver</option>
-              {data.drivers.map((driver) => (
+              {getDriverOptionsForSlot('p3').map((driver) => (
                 <option key={driver.id} value={driver.id}>
                   {driver.name} {driver.code ? `(${driver.code})` : ''}
                 </option>
@@ -485,7 +541,7 @@ export function PicksPage() {
         </div>
 
         <div>
-          <h3>Constructors (choose up to 2)</h3>
+          <h3>Constructors (optional, choose up to 2)</h3>
           <div className="constructor-grid">
             {data.constructors.map((constructor) => (
               <label key={constructor.id} className="constructor-chip">

@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore'
 import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../auth/useAuth'
 import { db, functions } from '../lib/firebase'
 
@@ -53,6 +53,71 @@ type InitializeSeasonRequest = {
   raceStartAt: string
   lockAt: string
   seedDefaultRoster: boolean
+}
+
+type ConstructorOption = {
+  id: string
+  name: string
+}
+
+type ScoringRulesForm = {
+  podiumPoints: {
+    p1: number
+    p2: number
+    p3: number
+  }
+  constructorPointsMode: 'official' | 'custom'
+  constructorPointsCustom: Record<string, number>
+  constructorPointsMultiplier: number
+  standingsMovement: {
+    constructorGain: number
+    driverGain: number
+  }
+  dnfPenalty: {
+    enabled: boolean
+    value: number
+  }
+}
+
+type ScoringConfig = {
+  seasonId: string
+  seasonName: string
+  scoringRules: ScoringRulesForm
+  constructors: ConstructorOption[]
+}
+
+type UpdateSeasonScoringRulesRequest = {
+  seasonId?: string
+  scoringRules: ScoringRulesForm
+}
+
+type UpdateSeasonScoringRulesResponse = {
+  seasonId: string
+  scoringRules: ScoringRulesForm
+}
+
+const DEFAULT_SCORING_RULES: ScoringRulesForm = {
+  podiumPoints: {
+    p1: 25,
+    p2: 18,
+    p3: 15,
+  },
+  constructorPointsMode: 'official',
+  constructorPointsCustom: {},
+  constructorPointsMultiplier: 1,
+  standingsMovement: {
+    constructorGain: 2,
+    driverGain: 1,
+  },
+  dnfPenalty: {
+    enabled: false,
+    value: 0,
+  },
+}
+
+function safeNumber(value: unknown, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
 }
 
 function toLocalInputValue(date: Date): string {
@@ -124,6 +189,94 @@ async function fetchPreseasonStatus(): Promise<PreseasonStatus> {
   }
 }
 
+async function fetchScoringConfig(seasonId: string): Promise<ScoringConfig> {
+  const [seasonSnap, constructorsSnap] = await Promise.all([
+    getDoc(doc(db, 'seasons', seasonId)),
+    getDocs(collection(db, 'constructors')),
+  ])
+
+  if (!seasonSnap.exists()) {
+    throw new Error(`Season ${seasonId} not found.`)
+  }
+
+  const seasonData = seasonSnap.data()
+  const rawScoring =
+    seasonData.scoringRules && typeof seasonData.scoringRules === 'object'
+      ? (seasonData.scoringRules as Record<string, unknown>)
+      : {}
+
+  const rawPodium =
+    rawScoring.podiumPoints && typeof rawScoring.podiumPoints === 'object'
+      ? (rawScoring.podiumPoints as Record<string, unknown>)
+      : {}
+
+  const rawStandings =
+    rawScoring.standingsMovement && typeof rawScoring.standingsMovement === 'object'
+      ? (rawScoring.standingsMovement as Record<string, unknown>)
+      : {}
+
+  const rawDnf =
+    rawScoring.dnfPenalty && typeof rawScoring.dnfPenalty === 'object'
+      ? (rawScoring.dnfPenalty as Record<string, unknown>)
+      : {}
+
+  const constructors = constructorsSnap.docs
+    .map((constructorDoc) => {
+      const data = constructorDoc.data()
+      return {
+        id: constructorDoc.id,
+        name: (data.name as string | undefined) ?? constructorDoc.id,
+      } satisfies ConstructorOption
+    })
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  const customMapRaw =
+    rawScoring.constructorPointsCustom && typeof rawScoring.constructorPointsCustom === 'object'
+      ? (rawScoring.constructorPointsCustom as Record<string, unknown>)
+      : {}
+
+  const scoringRules: ScoringRulesForm = {
+    podiumPoints: {
+      p1: safeNumber(rawPodium.p1, DEFAULT_SCORING_RULES.podiumPoints.p1),
+      p2: safeNumber(rawPodium.p2, DEFAULT_SCORING_RULES.podiumPoints.p2),
+      p3: safeNumber(rawPodium.p3, DEFAULT_SCORING_RULES.podiumPoints.p3),
+    },
+    constructorPointsMode:
+      rawScoring.constructorPointsMode === 'custom'
+        ? 'custom'
+        : DEFAULT_SCORING_RULES.constructorPointsMode,
+    constructorPointsCustom: Object.entries(customMapRaw).reduce<Record<string, number>>(
+      (acc, [constructorId, value]) => {
+        acc[constructorId] = safeNumber(value, 0)
+        return acc
+      },
+      {},
+    ),
+    constructorPointsMultiplier: safeNumber(
+      rawScoring.constructorPointsMultiplier,
+      DEFAULT_SCORING_RULES.constructorPointsMultiplier,
+    ),
+    standingsMovement: {
+      constructorGain: safeNumber(
+        rawStandings.constructorGain,
+        DEFAULT_SCORING_RULES.standingsMovement.constructorGain,
+      ),
+      driverGain: safeNumber(rawStandings.driverGain, DEFAULT_SCORING_RULES.standingsMovement.driverGain),
+    },
+    dnfPenalty: {
+      enabled: rawDnf.enabled === true,
+      value: safeNumber(rawDnf.value, DEFAULT_SCORING_RULES.dnfPenalty.value),
+    },
+  }
+
+  return {
+    seasonId,
+    seasonName: (seasonData.name as string | undefined) ?? seasonId,
+    scoringRules,
+    constructors,
+  }
+}
+
 async function fetchGroupAdminData(groupId: string): Promise<GroupAdminData> {
   const groupSnap = await getDoc(doc(db, 'groups', groupId))
   if (!groupSnap.exists()) throw new Error('Group not found.')
@@ -175,6 +328,8 @@ export function AdminPage() {
   const [lockAt, setLockAt] = useState(toLocalInputValue(defaultStart))
   const [activateSeason, setActivateSeason] = useState(true)
   const [seedDefaultRoster, setSeedDefaultRoster] = useState(true)
+  const [scoringRulesForm, setScoringRulesForm] = useState<ScoringRulesForm>(DEFAULT_SCORING_RULES)
+  const [scoringNotice, setScoringNotice] = useState<string | null>(null)
 
   const groupQuery = useQuery({
     queryKey: ['group-admin', activeGroupId],
@@ -186,6 +341,17 @@ export function AdminPage() {
     queryKey: ['preseason-status'],
     queryFn: fetchPreseasonStatus,
   })
+
+  const scoringQuery = useQuery({
+    queryKey: ['season-scoring', preseasonQuery.data?.selectedSeasonId],
+    queryFn: () => fetchScoringConfig(preseasonQuery.data!.selectedSeasonId!),
+    enabled: Boolean(preseasonQuery.data?.selectedSeasonId),
+  })
+
+  useEffect(() => {
+    if (!scoringQuery.data) return
+    setScoringRulesForm(scoringQuery.data.scoringRules)
+  }, [scoringQuery.data])
 
   const approveMutation = useMutation({
     mutationFn: async (uid: string) => {
@@ -266,6 +432,41 @@ export function AdminPage() {
     onError: (error) => {
       setSetupNotice(null)
       setActionError(error instanceof Error ? error.message : 'Failed to initialize season')
+    },
+  })
+
+  const scoringMutation = useMutation({
+    mutationFn: async () => {
+      if (!scoringQuery.data?.seasonId) {
+        throw new Error('No season selected to update scoring rules.')
+      }
+
+      const callable = httpsCallable<
+        UpdateSeasonScoringRulesRequest,
+        UpdateSeasonScoringRulesResponse
+      >(functions, 'updateSeasonScoringRules')
+
+      const response = await callable({
+        seasonId: scoringQuery.data.seasonId,
+        scoringRules: scoringRulesForm,
+      })
+
+      return response.data
+    },
+    onSuccess: async (result) => {
+      setActionError(null)
+      setScoringNotice(`Scoring rules updated for season ${result.seasonId}.`)
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['season-scoring', result.seasonId] }),
+        queryClient.invalidateQueries({ queryKey: ['preseason-status'] }),
+        queryClient.invalidateQueries({ queryKey: ['picks-bootstrap'] }),
+        queryClient.invalidateQueries({ queryKey: ['dashboard-current-pick'] }),
+        queryClient.invalidateQueries({ queryKey: ['leaderboard'] }),
+      ])
+    },
+    onError: (error) => {
+      setScoringNotice(null)
+      setActionError(error instanceof Error ? error.message : 'Failed to update scoring rules.')
     },
   })
 
@@ -451,6 +652,231 @@ export function AdminPage() {
           </button>
         </form>
         {setupNotice ? <p className="notice-text">{setupNotice}</p> : null}
+      </div>
+
+      <div className="admin-card">
+        <h3>Scoring Rules</h3>
+        <p>Tweak how fantasy points are calculated for the selected season.</p>
+        {scoringQuery.isLoading ? <p>Loading scoring rules...</p> : null}
+        {scoringQuery.isError ? (
+          <p className="validation-error">{(scoringQuery.error as Error).message}</p>
+        ) : null}
+        {scoringQuery.data ? (
+          <form
+            className="auth-form preseason-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              setActionError(null)
+              setScoringNotice(null)
+              scoringMutation.mutate()
+            }}
+          >
+            <p>
+              Season: <strong>{scoringQuery.data.seasonName}</strong> ({scoringQuery.data.seasonId})
+            </p>
+
+            <label>
+              P1 points
+              <input
+                type="number"
+                min={0}
+                value={String(scoringRulesForm.podiumPoints.p1)}
+                onChange={(event) =>
+                  setScoringRulesForm((current) => ({
+                    ...current,
+                    podiumPoints: {
+                      ...current.podiumPoints,
+                      p1: safeNumber(event.target.value, current.podiumPoints.p1),
+                    },
+                  }))
+                }
+              />
+            </label>
+
+            <label>
+              P2 points
+              <input
+                type="number"
+                min={0}
+                value={String(scoringRulesForm.podiumPoints.p2)}
+                onChange={(event) =>
+                  setScoringRulesForm((current) => ({
+                    ...current,
+                    podiumPoints: {
+                      ...current.podiumPoints,
+                      p2: safeNumber(event.target.value, current.podiumPoints.p2),
+                    },
+                  }))
+                }
+              />
+            </label>
+
+            <label>
+              P3 points
+              <input
+                type="number"
+                min={0}
+                value={String(scoringRulesForm.podiumPoints.p3)}
+                onChange={(event) =>
+                  setScoringRulesForm((current) => ({
+                    ...current,
+                    podiumPoints: {
+                      ...current.podiumPoints,
+                      p3: safeNumber(event.target.value, current.podiumPoints.p3),
+                    },
+                  }))
+                }
+              />
+            </label>
+
+            <label>
+              Constructor points mode
+              <select
+                value={scoringRulesForm.constructorPointsMode}
+                onChange={(event) =>
+                  setScoringRulesForm((current) => ({
+                    ...current,
+                    constructorPointsMode: event.target.value === 'custom' ? 'custom' : 'official',
+                  }))
+                }
+              >
+                <option value="official">Official race points</option>
+                <option value="custom">Custom points per constructor</option>
+              </select>
+            </label>
+
+            <label>
+              Constructor points multiplier
+              <input
+                type="number"
+                min={0}
+                step="0.1"
+                value={String(scoringRulesForm.constructorPointsMultiplier)}
+                onChange={(event) =>
+                  setScoringRulesForm((current) => ({
+                    ...current,
+                    constructorPointsMultiplier: safeNumber(
+                      event.target.value,
+                      current.constructorPointsMultiplier,
+                    ),
+                  }))
+                }
+              />
+            </label>
+
+            <label>
+              Constructor standings gain (per place)
+              <input
+                type="number"
+                min={0}
+                value={String(scoringRulesForm.standingsMovement.constructorGain)}
+                onChange={(event) =>
+                  setScoringRulesForm((current) => ({
+                    ...current,
+                    standingsMovement: {
+                      ...current.standingsMovement,
+                      constructorGain: safeNumber(
+                        event.target.value,
+                        current.standingsMovement.constructorGain,
+                      ),
+                    },
+                  }))
+                }
+              />
+            </label>
+
+            <label>
+              Driver standings gain (per place)
+              <input
+                type="number"
+                min={0}
+                value={String(scoringRulesForm.standingsMovement.driverGain)}
+                onChange={(event) =>
+                  setScoringRulesForm((current) => ({
+                    ...current,
+                    standingsMovement: {
+                      ...current.standingsMovement,
+                      driverGain: safeNumber(event.target.value, current.standingsMovement.driverGain),
+                    },
+                  }))
+                }
+              />
+            </label>
+
+            <label>
+              DNF penalty enabled
+              <select
+                value={scoringRulesForm.dnfPenalty.enabled ? 'yes' : 'no'}
+                onChange={(event) =>
+                  setScoringRulesForm((current) => ({
+                    ...current,
+                    dnfPenalty: {
+                      ...current.dnfPenalty,
+                      enabled: event.target.value === 'yes',
+                    },
+                  }))
+                }
+              >
+                <option value="no">No</option>
+                <option value="yes">Yes</option>
+              </select>
+            </label>
+
+            <label>
+              DNF penalty value
+              <input
+                type="number"
+                min={0}
+                value={String(scoringRulesForm.dnfPenalty.value)}
+                disabled={!scoringRulesForm.dnfPenalty.enabled}
+                onChange={(event) =>
+                  setScoringRulesForm((current) => ({
+                    ...current,
+                    dnfPenalty: {
+                      ...current.dnfPenalty,
+                      value: safeNumber(event.target.value, current.dnfPenalty.value),
+                    },
+                  }))
+                }
+              />
+            </label>
+
+            {scoringRulesForm.constructorPointsMode === 'custom' ? (
+              <>
+                <h4>Custom Constructor Points</h4>
+                <div className="preseason-status-grid">
+                  {scoringQuery.data.constructors.map((constructor) => (
+                    <label key={constructor.id}>
+                      {constructor.name}
+                      <input
+                        type="number"
+                        min={0}
+                        value={String(scoringRulesForm.constructorPointsCustom[constructor.id] ?? 0)}
+                        onChange={(event) =>
+                          setScoringRulesForm((current) => ({
+                            ...current,
+                            constructorPointsCustom: {
+                              ...current.constructorPointsCustom,
+                              [constructor.id]: safeNumber(
+                                event.target.value,
+                                current.constructorPointsCustom[constructor.id] ?? 0,
+                              ),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                  ))}
+                </div>
+              </>
+            ) : null}
+
+            <button type="submit" disabled={scoringMutation.isPending}>
+              {scoringMutation.isPending ? 'Saving...' : 'Save Scoring Rules'}
+            </button>
+          </form>
+        ) : null}
+        {scoringNotice ? <p className="notice-text">{scoringNotice}</p> : null}
       </div>
 
       <div className="admin-card">
