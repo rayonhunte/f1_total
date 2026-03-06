@@ -12,7 +12,7 @@ import {
   isDnfStatus,
 } from './jolpi'
 import { calculatePickScore, mergeScoringRules } from './scoring'
-import type { PickDoc, RaceDoc, RaceResultDoc, ScoreDoc, SeasonDoc } from './types'
+import type { PickDoc, RaceDoc, RaceResultDoc, ScoreDoc, ScoringRules, SeasonDoc } from './types'
 
 initializeApp()
 const db = getFirestore()
@@ -37,6 +37,11 @@ type InitializeSeasonRequest = {
 type LiveRosterRequest = {
   seasonId?: string
   seasonYear?: number
+}
+
+type UpdateSeasonScoringRulesRequest = {
+  seasonId?: string
+  scoringRules?: Partial<ScoringRules>
 }
 
 type ConstructorSeed = {
@@ -115,6 +120,90 @@ function parseRequiredIsoDate(value: string | undefined, fieldLabel: string): Da
   }
 
   return parsed
+}
+
+function parseNonNegativeNumber(value: unknown, fieldLabel: string): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new HttpsError('invalid-argument', `${fieldLabel} must be a non-negative number.`)
+  }
+  return parsed
+}
+
+function parseScoringRulesInput(raw: unknown): ScoringRules {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new HttpsError('invalid-argument', 'scoringRules must be an object.')
+  }
+
+  const input = raw as Record<string, unknown>
+  const podiumInput =
+    input.podiumPoints && typeof input.podiumPoints === 'object' && !Array.isArray(input.podiumPoints)
+      ? (input.podiumPoints as Record<string, unknown>)
+      : {}
+
+  const standingsInput =
+    input.standingsMovement &&
+    typeof input.standingsMovement === 'object' &&
+    !Array.isArray(input.standingsMovement)
+      ? (input.standingsMovement as Record<string, unknown>)
+      : {}
+
+  const dnfInput =
+    input.dnfPenalty && typeof input.dnfPenalty === 'object' && !Array.isArray(input.dnfPenalty)
+      ? (input.dnfPenalty as Record<string, unknown>)
+      : {}
+
+  const constructorMode = input.constructorPointsMode
+  if (constructorMode !== 'official' && constructorMode !== 'custom') {
+    throw new HttpsError(
+      'invalid-argument',
+      'scoringRules.constructorPointsMode must be "official" or "custom".',
+    )
+  }
+
+  const customRaw = input.constructorPointsCustom
+  if (customRaw != null && (typeof customRaw !== 'object' || Array.isArray(customRaw))) {
+    throw new HttpsError('invalid-argument', 'scoringRules.constructorPointsCustom must be an object.')
+  }
+
+  const constructorPointsCustomEntries = Object.entries(
+    (customRaw as Record<string, unknown>) ?? {},
+  ).reduce<Record<string, number>>((acc, [constructorId, rawValue]) => {
+    if (!constructorId.trim()) return acc
+    acc[constructorId] = parseNonNegativeNumber(
+      rawValue,
+      `scoringRules.constructorPointsCustom.${constructorId}`,
+    )
+    return acc
+  }, {})
+
+  return mergeScoringRules({
+    podiumPoints: {
+      p1: parseNonNegativeNumber(podiumInput.p1 ?? 25, 'scoringRules.podiumPoints.p1'),
+      p2: parseNonNegativeNumber(podiumInput.p2 ?? 18, 'scoringRules.podiumPoints.p2'),
+      p3: parseNonNegativeNumber(podiumInput.p3 ?? 15, 'scoringRules.podiumPoints.p3'),
+    },
+    constructorPointsMode: constructorMode,
+    constructorPointsMultiplier: parseNonNegativeNumber(
+      input.constructorPointsMultiplier ?? 1,
+      'scoringRules.constructorPointsMultiplier',
+    ),
+    constructorPointsCustom: constructorPointsCustomEntries,
+    standingsMovement: {
+      constructorGain: parseNonNegativeNumber(
+        standingsInput.constructorGain ?? 2,
+        'scoringRules.standingsMovement.constructorGain',
+      ),
+      driverGain: parseNonNegativeNumber(
+        standingsInput.driverGain ?? 1,
+        'scoringRules.standingsMovement.driverGain',
+      ),
+    },
+    dnfPenalty: {
+      enabled: dnfInput.enabled === true,
+      value: parseNonNegativeNumber(dnfInput.value ?? 0, 'scoringRules.dnfPenalty.value'),
+    },
+  })
 }
 
 async function seedRosterIfNeeded(enabled: boolean): Promise<{ constructorsSeeded: number; driversSeeded: number }> {
@@ -687,6 +776,54 @@ export const initializeSeasonBootstrap = onCall(
       activated: activateSeason,
       seasonCreated: !seasonSnapshot.exists,
       rosterSeeded: seedResult,
+    }
+  },
+)
+
+export const updateSeasonScoringRules = onCall(
+  {
+    region: 'us-central1',
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication is required.')
+    }
+
+    const uid = request.auth.uid
+    const isAdmin = request.auth.token.role === 'admin'
+
+    if (!isAdmin) {
+      const ownedGroupsSnapshot = await db.collection('groups').where('ownerUid', '==', uid).limit(1).get()
+      if (ownedGroupsSnapshot.empty) {
+        throw new HttpsError(
+          'permission-denied',
+          'Only group owners or platform admins can update scoring rules.',
+        )
+      }
+    }
+
+    const data = (request.data ?? {}) as UpdateSeasonScoringRulesRequest
+    const seasonId = data.seasonId?.trim() || (await findActiveSeasonId())
+    const seasonRef = db.collection('seasons').doc(seasonId)
+    const seasonSnapshot = await seasonRef.get()
+
+    if (!seasonSnapshot.exists) {
+      throw new HttpsError('not-found', `Season ${seasonId} does not exist.`)
+    }
+
+    const scoringRules = parseScoringRulesInput(data.scoringRules)
+
+    await seasonRef.set(
+      {
+        scoringRules,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    )
+
+    return {
+      seasonId,
+      scoringRules,
     }
   },
 )
