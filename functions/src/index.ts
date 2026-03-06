@@ -93,7 +93,6 @@ type GetMyGroupsResponse = {
     status: 'active' | 'pending'
   }>
 }
-
 type ConstructorSeed = {
   id: string
   name: string
@@ -1280,7 +1279,6 @@ export const getMyGroups = onCall(
     }
   },
 )
-
 export const getWeeklyRecap = onCall(
   {
     region: 'us-central1',
