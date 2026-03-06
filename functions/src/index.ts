@@ -3,7 +3,14 @@ import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore'
 import { logger } from 'firebase-functions'
 import { HttpsError, onCall } from 'firebase-functions/v2/https'
 import { onSchedule } from 'firebase-functions/v2/scheduler'
-import { fetchConstructorStandings, fetchDriverStandings, fetchRaceResults, isDnfStatus } from './jolpi'
+import {
+  fetchConstructorStandings,
+  fetchDriverStandings,
+  fetchRaceResults,
+  fetchSeasonConstructors,
+  fetchSeasonDrivers,
+  isDnfStatus,
+} from './jolpi'
 import { calculatePickScore, mergeScoringRules } from './scoring'
 import type { PickDoc, RaceDoc, RaceResultDoc, ScoreDoc, SeasonDoc } from './types'
 
@@ -25,6 +32,11 @@ type InitializeSeasonRequest = {
   raceStartAt?: string
   lockAt?: string
   seedDefaultRoster?: boolean
+}
+
+type LiveRosterRequest = {
+  seasonId?: string
+  seasonYear?: number
 }
 
 type ConstructorSeed = {
@@ -192,6 +204,54 @@ async function findActiveSeasonId(): Promise<string> {
   }
 
   return snapshot.docs[0].id
+}
+
+async function resolveRosterSeasonYear(input: LiveRosterRequest): Promise<number> {
+  const explicitYear = Number(input.seasonYear)
+  if (Number.isFinite(explicitYear) && explicitYear >= 1950 && explicitYear <= 2100) {
+    return explicitYear
+  }
+
+  const seasonId = input.seasonId || (await findActiveSeasonId())
+  const season = await getSeason(seasonId)
+  const seasonYear = Number(season.year)
+  if (Number.isFinite(seasonYear) && seasonYear >= 1950 && seasonYear <= 2100) {
+    return seasonYear
+  }
+
+  return new Date().getUTCFullYear()
+}
+
+async function fetchLiveRosterWithFallback(targetSeasonYear: number) {
+  const currentYear = new Date().getUTCFullYear()
+
+  async function fetchForYear(year: number) {
+    const [drivers, constructors] = await Promise.all([
+      fetchSeasonDrivers(year),
+      fetchSeasonConstructors(year),
+    ])
+    return { seasonYear: year, drivers, constructors }
+  }
+
+  try {
+    const primary = await fetchForYear(targetSeasonYear)
+    if (primary.drivers.length > 0 && primary.constructors.length > 0) {
+      return primary
+    }
+  } catch (error) {
+    if (targetSeasonYear === currentYear) {
+      throw error
+    }
+  }
+
+  if (targetSeasonYear !== currentYear) {
+    const fallback = await fetchForYear(currentYear)
+    if (fallback.drivers.length > 0 && fallback.constructors.length > 0) {
+      return fallback
+    }
+  }
+
+  throw new Error('Live roster unavailable from Jolpi API.')
 }
 
 async function pickRaceForSync(
@@ -627,6 +687,36 @@ export const initializeSeasonBootstrap = onCall(
       activated: activateSeason,
       seasonCreated: !seasonSnapshot.exists,
       rosterSeeded: seedResult,
+    }
+  },
+)
+
+export const getLiveRoster = onCall(
+  {
+    region: 'us-central1',
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication is required.')
+    }
+
+    const data = (request.data ?? {}) as LiveRosterRequest
+
+    try {
+      const seasonYear = await resolveRosterSeasonYear(data)
+      const roster = await fetchLiveRosterWithFallback(seasonYear)
+
+      return {
+        source: 'jolpi',
+        seasonYear: roster.seasonYear,
+        drivers: roster.drivers,
+        constructors: roster.constructors,
+      }
+    } catch (error) {
+      throw new HttpsError(
+        'internal',
+        error instanceof Error ? error.message : 'Failed to fetch live roster.',
+      )
     }
   },
 )

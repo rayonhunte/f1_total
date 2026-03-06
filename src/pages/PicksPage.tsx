@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { httpsCallable } from 'firebase/functions'
 import {
   collection,
   doc,
@@ -13,7 +14,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { z } from 'zod'
 import { useAuth } from '../auth/useAuth'
-import { db } from '../lib/firebase'
+import { db, functions } from '../lib/firebase'
 import { resolveSeasonForClient } from '../lib/season'
 
 type DriverOption = {
@@ -31,10 +32,23 @@ type RaceInfo = {
   id: string
   name: string
   seasonId: string
+  seasonYear?: number
   round: number
   raceStartAt?: string
   lockAt?: string
   status?: 'scheduled' | 'in_progress' | 'completed'
+}
+
+type LiveRosterRequest = {
+  seasonId?: string
+  seasonYear?: number
+}
+
+type LiveRosterResponse = {
+  source: 'jolpi'
+  seasonYear: number
+  drivers: DriverOption[]
+  constructors: ConstructorOption[]
 }
 
 type PicksBootstrap = {
@@ -119,6 +133,7 @@ async function fetchRacesForSeason(seasonId: string): Promise<RaceInfo[]> {
         id: raceDoc.id,
         name: (data.name as string | undefined) ?? raceDoc.id,
         seasonId,
+        seasonYear: Number(data.seasonYear ?? 0) || undefined,
         round: Number(data.round ?? 0),
         raceStartAt: data.raceStartAt
           ? typeof data.raceStartAt.toDate === 'function'
@@ -153,6 +168,26 @@ async function fetchOptions<T extends { id: string; name: string }>(
     .sort((a, b) => a.name.localeCompare(b.name))
 }
 
+async function fetchLiveRoster(seasonId: string, seasonYear?: number): Promise<LiveRosterResponse> {
+  const callable = httpsCallable<LiveRosterRequest, LiveRosterResponse>(functions, 'getLiveRoster')
+  const response = await callable({
+    seasonId,
+    seasonYear,
+  })
+
+  const drivers = (response.data.drivers ?? []).slice().sort((a, b) => a.name.localeCompare(b.name))
+  const constructors = (response.data.constructors ?? [])
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  return {
+    source: response.data.source,
+    seasonYear: response.data.seasonYear,
+    drivers,
+    constructors,
+  }
+}
+
 async function fetchPicksBootstrap(uid: string, groupId: string, selectedRaceId?: string): Promise<PicksBootstrap> {
   const season = await resolveSeasonForClient()
   const seasonId = season.id
@@ -160,10 +195,20 @@ async function fetchPicksBootstrap(uid: string, groupId: string, selectedRaceId?
   const preferredRace = selectedRaceId ? races.find((race) => race.id === selectedRaceId) : undefined
   const nextOpenRace = races.find((race) => !computeRaceLockInfo(race).isLocked)
   const race = preferredRace ?? nextOpenRace ?? races[races.length - 1]
-  const [drivers, constructors] = await Promise.all([
-    fetchOptions<DriverOption>('drivers'),
-    fetchOptions<ConstructorOption>('constructors'),
-  ])
+
+  let drivers: DriverOption[] = []
+  let constructors: ConstructorOption[] = []
+
+  try {
+    const liveRoster = await fetchLiveRoster(seasonId, race.seasonYear)
+    drivers = liveRoster.drivers
+    constructors = liveRoster.constructors
+  } catch {
+    ;[drivers, constructors] = await Promise.all([
+      fetchOptions<DriverOption>('drivers'),
+      fetchOptions<ConstructorOption>('constructors'),
+    ])
+  }
 
   const pickId = `${seasonId}_${race.id}_${groupId}_${uid}`
   const pickSnapshot = await getDoc(doc(db, 'picks', pickId))

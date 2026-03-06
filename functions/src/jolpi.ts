@@ -56,6 +56,41 @@ type ConstructorStandingsTable = {
   }
 }
 
+type DriverEntry = {
+  driverId: string
+  code?: string
+  givenName?: string
+  familyName?: string
+}
+
+type ConstructorEntry = {
+  constructorId: string
+  name?: string
+}
+
+type DriverTable = {
+  DriverTable: {
+    Drivers: DriverEntry[]
+  }
+}
+
+type ConstructorTable = {
+  ConstructorTable: {
+    Constructors: ConstructorEntry[]
+  }
+}
+
+export type LiveDriver = {
+  id: string
+  name: string
+  code?: string
+}
+
+export type LiveConstructor = {
+  id: string
+  name: string
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url)
 
@@ -82,6 +117,34 @@ export async function fetchConstructorStandings(seasonYear: number, round: numbe
   const url = `${JOLPI_BASE}/${seasonYear}/${round}/constructorStandings.json`
   const payload = await fetchJson<JolpiResponse<ConstructorStandingsTable>>(url)
   return payload.MRData.StandingsTable.StandingsLists[0]?.ConstructorStandings ?? []
+}
+
+export async function fetchSeasonDrivers(seasonYear: number): Promise<LiveDriver[]> {
+  const url = `${JOLPI_BASE}/${seasonYear}/drivers.json?limit=100`
+  const payload = await fetchJson<JolpiResponse<DriverTable>>(url)
+
+  return (payload.MRData.DriverTable.Drivers ?? [])
+    .map((driver) => {
+      const name = `${driver.givenName ?? ''} ${driver.familyName ?? ''}`.trim()
+      return {
+        id: driver.driverId,
+        name: name || driver.driverId,
+        code: driver.code,
+      } satisfies LiveDriver
+    })
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+export async function fetchSeasonConstructors(seasonYear: number): Promise<LiveConstructor[]> {
+  const url = `${JOLPI_BASE}/${seasonYear}/constructors.json?limit=100`
+  const payload = await fetchJson<JolpiResponse<ConstructorTable>>(url)
+
+  return (payload.MRData.ConstructorTable.Constructors ?? [])
+    .map((constructor) => ({
+      id: constructor.constructorId,
+      name: constructor.name || constructor.constructorId,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name))
 }
 
 export function isDnfStatus(status: string): boolean {
