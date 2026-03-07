@@ -1,9 +1,10 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import { doc, getDoc } from 'firebase/firestore'
+import { httpsCallable } from 'firebase/functions'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth/useAuth'
 import { ThemeToggle } from '../components/ThemeToggle'
-import { db } from '../lib/firebase'
+import { db, functions } from '../lib/firebase'
 import { signOut } from 'firebase/auth'
 import { auth } from '../lib/firebase'
 
@@ -21,6 +22,7 @@ export function GroupsPage() {
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [joinableGroups, setJoinableGroups] = useState<Array<{ id: string; name: string }>>([])
 
   useEffect(() => {
     const inviteCode = searchParams.get('invite')
@@ -35,6 +37,31 @@ export function GroupsPage() {
       setNotice('Invite code detected. Submit to request group access.')
     }
   }, [searchParams])
+
+  useEffect(() => {
+    let isMounted = true
+    const getJoinableGroups = httpsCallable<undefined, { groups: Array<{ id: string; name: string }> }>(
+      functions,
+      'getJoinableGroups',
+    )
+
+    void (async () => {
+      try {
+        const response = await getJoinableGroups()
+        if (!isMounted) return
+        setJoinableGroups(
+          (response.data.groups ?? []).filter((group) => group.id && group.name).sort((a, b) => a.name.localeCompare(b.name)),
+        )
+      } catch (loadError) {
+        if (!isMounted) return
+        console.warn('Failed to load joinable groups', loadError)
+      }
+    })()
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   const activeMemberships = groups.filter((group) => group.status === 'active')
   const pendingMemberships = groups.filter((group) => group.status === 'pending')
@@ -185,16 +212,25 @@ export function GroupsPage() {
 
           <div className="admin-card">
             <h3>Request to Join</h3>
-            <p>Enter the group id and invite code from your admin's invite link.</p>
+            <p>Select a group and enter that group's invite code from your admin's invite link.</p>
             <form className="auth-form" onSubmit={handleJoinGroup}>
               <label>
-                Group id
-                <input
-                  type="text"
+                Group
+                <select
                   value={targetGroupId}
                   onChange={(event) => setTargetGroupId(event.target.value)}
                   required
-                />
+                >
+                  <option value="">Select a group</option>
+                  {targetGroupId && !joinableGroups.some((group) => group.id === targetGroupId) ? (
+                    <option value={targetGroupId}>{targetGroupId}</option>
+                  ) : null}
+                  {joinableGroups.map((group) => (
+                    <option key={group.id} value={group.id}>
+                      {group.name}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label>
                 Invite code

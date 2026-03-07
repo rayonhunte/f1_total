@@ -93,6 +93,13 @@ type GetMyGroupsResponse = {
     status: 'active' | 'pending'
   }>
 }
+
+type GetJoinableGroupsResponse = {
+  groups: Array<{
+    id: string
+    name: string
+  }>
+}
 type ConstructorSeed = {
   id: string
   name: string
@@ -1298,6 +1305,30 @@ export const getMyGroups = onCall(
     return {
       groups: Array.from(groupsById.values()).sort((a, b) => a.name.localeCompare(b.name)),
     }
+  },
+)
+
+export const getJoinableGroups = onCall(
+  {
+    region: 'us-central1',
+  },
+  async (request): Promise<GetJoinableGroupsResponse> => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication is required.')
+    }
+
+    const groupsSnapshot = await db.collection('groups').select('name').get()
+    const groups = groupsSnapshot.docs
+      .map((groupDoc) => {
+        const data = groupDoc.data() ?? {}
+        return {
+          id: groupDoc.id,
+          name: String(data.name ?? groupDoc.id),
+        }
+      })
+      .sort((a, b) => a.name.localeCompare(b.name))
+
+    return { groups }
   },
 )
 export const getWeeklyRecap = onCall(
