@@ -30,6 +30,12 @@ type SyncRequest = {
   raceId?: string
 }
 
+type GroupSyncRequest = {
+  seasonId?: string
+  raceId?: string
+  groupId?: string
+}
+
 type InitializeSeasonRequest = {
   seasonId?: string
   seasonName?: string
@@ -82,6 +88,13 @@ type RequestGroupAccessRequest = {
 type RequestGroupAccessResponse = {
   groupId: string
   status: 'active' | 'pending'
+}
+
+type GroupSyncResponse = {
+  seasonId: string
+  raceId: string
+  groupId: string
+  scoredPicks: number
 }
 
 type GetMyGroupsResponse = {
@@ -873,6 +886,121 @@ async function runRaceSync(input: SyncRequest): Promise<{ seasonId: string; race
   return { seasonId, raceId, scoredPicks }
 }
 
+async function canManageGroup(uid: string, groupId: string, isPlatformAdmin: boolean): Promise<boolean> {
+  if (isPlatformAdmin) return true
+
+  const groupSnap = await db.collection('groups').doc(groupId).get()
+  if (!groupSnap.exists) return false
+  if (String(groupSnap.data()?.ownerUid ?? '') === uid) return true
+
+  const memberSnap = await db.collection('groups').doc(groupId).collection('members').doc(uid).get()
+  if (!memberSnap.exists) return false
+  const memberData = memberSnap.data() ?? {}
+  const status = String(memberData.status ?? 'pending')
+  const role = String(memberData.role ?? 'member')
+  return status === 'active' && (role === 'owner' || role === 'admin')
+}
+
+async function findLatestResultRaceId(seasonId: string): Promise<string | null> {
+  const resultsSnap = await db.collection('results').where('seasonId', '==', seasonId).get()
+  if (resultsSnap.empty) return null
+
+  const latest = resultsSnap.docs
+    .map((row) => {
+      const data = row.data() as Partial<RaceResultDoc>
+      return {
+        raceId: row.id,
+        round: Number(data.round ?? 0),
+      }
+    })
+    .sort((a, b) => b.round - a.round)[0]
+
+  return latest?.raceId ?? null
+}
+
+async function recomputeGroupRaceScores(
+  seasonId: string,
+  raceId: string,
+  groupId: string,
+  result: RaceResultDoc,
+): Promise<number> {
+  const season = await getSeason(seasonId)
+  const rules = mergeScoringRules(season.scoringRules)
+
+  const picksSnapshot = await db
+    .collection('picks')
+    .where('seasonId', '==', seasonId)
+    .where('raceId', '==', raceId)
+    .where('groupId', '==', groupId)
+    .get()
+
+  for (const pickDoc of picksSnapshot.docs) {
+    const pick = pickDoc.data() as PickDoc
+    const scoreRef = db.collection('scores').doc(`${seasonId}_${groupId}_${pick.uid}`)
+    const scoreSnap = await scoreRef.get()
+    const existingData = (scoreSnap.data() ?? {}) as ScoreDoc
+    const existingWildcardRaceId = existingData.wildcardRaceId
+
+    let applyWildcard = false
+    let wildcardRaceId = existingWildcardRaceId
+
+    if (pick.wildcard) {
+      if (existingWildcardRaceId) {
+        applyWildcard = existingWildcardRaceId === raceId
+      } else {
+        applyWildcard = true
+        wildcardRaceId = raceId
+      }
+    }
+
+    const breakdown = calculatePickScoreBreakdown(pick, result, rules, applyWildcard)
+
+    const existingByRace = (existingData.byRace ?? {}) as Record<string, number>
+    const existingDetailByRace =
+      (existingData.detailByRace ?? {}) as Record<
+        string,
+        {
+          basePoints: number
+          captainBonus: number
+          wildcardBonus: number
+          totalPoints: number
+        }
+      >
+
+    const byRace = {
+      ...existingByRace,
+      [raceId]: breakdown.totalPoints,
+    }
+
+    const detailByRace = {
+      ...existingDetailByRace,
+      [raceId]: breakdown,
+    }
+
+    const totalPoints = Object.values(byRace).reduce((sum, value) => sum + value, 0)
+
+    await scoreRef.set(
+      {
+        uid: pick.uid,
+        groupId,
+        seasonId,
+        totalPoints,
+        byRace,
+        detailByRace,
+        wildcardRaceId: wildcardRaceId ?? null,
+        lastUpdatedAt: new Date().toISOString(),
+      },
+      { merge: true },
+    )
+  }
+
+  await rebuildLeaderboard(seasonId, raceId, groupId)
+  await buildWeeklyRecap(seasonId, groupId, raceId)
+  await notifyScoreUpdates(seasonId, groupId, raceId)
+
+  return picksSnapshot.size
+}
+
 export const syncLatestResultsAndScores = onSchedule(
   {
     schedule: 'every 6 hours',
@@ -885,6 +1013,49 @@ export const syncLatestResultsAndScores = onSchedule(
     } catch (error) {
       logger.warn('Scheduled sync skipped or failed', { error: String(error) })
     }
+  },
+)
+
+export const ownerRunGroupRaceSync = onCall(
+  {
+    region: 'us-central1',
+  },
+  async (request): Promise<GroupSyncResponse> => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication is required.')
+    }
+
+    const data = (request.data ?? {}) as GroupSyncRequest
+    const groupId = data.groupId?.trim() ?? ''
+    if (!groupId) {
+      throw new HttpsError('invalid-argument', 'groupId is required.')
+    }
+
+    const uid = request.auth.uid
+    const isPlatformAdmin = request.auth.token.role === 'admin'
+    const canManage = await canManageGroup(uid, groupId, isPlatformAdmin)
+    if (!canManage) {
+      throw new HttpsError('permission-denied', 'Only group owners/admins or platform admins can run group sync.')
+    }
+
+    const seasonId = data.seasonId?.trim() || (await findActiveSeasonId())
+    const raceId = data.raceId?.trim() || (await findLatestResultRaceId(seasonId))
+    if (!raceId) {
+      throw new HttpsError('not-found', `No scored race results found for season ${seasonId}.`)
+    }
+
+    const resultSnap = await db.collection('results').doc(raceId).get()
+    if (!resultSnap.exists) {
+      throw new HttpsError('not-found', `Result ${raceId} not found.`)
+    }
+
+    const result = resultSnap.data() as RaceResultDoc
+    if (result.seasonId !== seasonId) {
+      throw new HttpsError('invalid-argument', 'raceId does not belong to the selected seasonId.')
+    }
+
+    const scoredPicks = await recomputeGroupRaceScores(seasonId, raceId, groupId, result)
+    return { seasonId, raceId, groupId, scoredPicks }
   },
 )
 

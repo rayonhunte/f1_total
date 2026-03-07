@@ -110,6 +110,13 @@ type SimulateSeasonScoringResponse = {
   topLosers: Array<{ groupId: string; uid: string; currentTotal: number; simulatedTotal: number; delta: number }>
 }
 
+type GroupRaceSyncResponse = {
+  seasonId: string
+  raceId: string
+  groupId: string
+  scoredPicks: number
+}
+
 type AdminTabKey = 'invite' | 'preseason' | 'scoring' | 'simulation' | 'members'
 
 const DEFAULT_SCORING_RULES: ScoringRulesForm = {
@@ -373,6 +380,7 @@ export function AdminPage() {
   const [scoringRulesForm, setScoringRulesForm] = useState<ScoringRulesForm>(DEFAULT_SCORING_RULES)
   const [scoringNotice, setScoringNotice] = useState<string | null>(null)
   const [simulationResult, setSimulationResult] = useState<SimulateSeasonScoringResponse | null>(null)
+  const [groupSyncNotice, setGroupSyncNotice] = useState<string | null>(null)
 
   const groupQuery = useQuery({
     queryKey: ['group-admin', activeGroupId],
@@ -538,6 +546,41 @@ export function AdminPage() {
     onError: (error) => {
       setSimulationResult(null)
       setActionError(error instanceof Error ? error.message : 'Failed to simulate scoring rules.')
+    },
+  })
+
+  const groupSyncMutation = useMutation({
+    mutationFn: async () => {
+      if (!activeGroupId) {
+        throw new Error('No active group selected.')
+      }
+
+      const callable = httpsCallable<{ seasonId?: string; groupId: string }, GroupRaceSyncResponse>(
+        functions,
+        'ownerRunGroupRaceSync',
+      )
+
+      const response = await callable({
+        seasonId: scoringQuery.data?.seasonId,
+        groupId: activeGroupId,
+      })
+
+      return response.data
+    },
+    onSuccess: async (result) => {
+      setActionError(null)
+      setGroupSyncNotice(
+        `Scoring sync completed for ${result.groupId}. Race: ${result.raceId}. Picks scored: ${result.scoredPicks}.`,
+      )
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['leaderboard'] }),
+        queryClient.invalidateQueries({ queryKey: ['weekly-recap'] }),
+        queryClient.invalidateQueries({ queryKey: ['dashboard-current-pick'] }),
+      ])
+    },
+    onError: (error) => {
+      setGroupSyncNotice(null)
+      setActionError(error instanceof Error ? error.message : 'Failed to run group scoring sync.')
     },
   })
 
@@ -1169,6 +1212,18 @@ export function AdminPage() {
           <div className="admin-card">
             <h3>Admin Simulation Tool</h3>
             <p>Test these scoring rules against past races before applying them.</p>
+            <button
+              type="button"
+              onClick={() => {
+                setActionError(null)
+                setGroupSyncNotice(null)
+                groupSyncMutation.mutate()
+              }}
+              disabled={groupSyncMutation.isPending}
+            >
+              {groupSyncMutation.isPending ? 'Syncing...' : 'Run Group Leaderboard Sync'}
+            </button>
+            {groupSyncNotice ? <p className="notice-text">{groupSyncNotice}</p> : null}
             <button type="button" onClick={() => simulateMutation.mutate()} disabled={simulateMutation.isPending}>
               {simulateMutation.isPending ? 'Simulating...' : 'Run Simulation'}
             </button>
