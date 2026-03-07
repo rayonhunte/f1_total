@@ -93,6 +93,13 @@ type GetMyGroupsResponse = {
     status: 'active' | 'pending'
   }>
 }
+
+type GetJoinableGroupsResponse = {
+  groups: Array<{
+    id: string
+    name: string
+  }>
+}
 type ConstructorSeed = {
   id: string
   name: string
@@ -1227,10 +1234,7 @@ export const getMyGroups = onCall(
       }
     >()
 
-    const [ownerGroupsSnapshot, membershipSnapshot] = await Promise.all([
-      db.collection('groups').where('ownerUid', '==', uid).get(),
-      db.collectionGroup('members').where('uid', '==', uid).get(),
-    ])
+    const ownerGroupsSnapshot = await db.collection('groups').where('ownerUid', '==', uid).get()
 
     const groupIds = new Set<string>()
     for (const groupDoc of ownerGroupsSnapshot.docs) {
@@ -1238,18 +1242,41 @@ export const getMyGroups = onCall(
     }
 
     const membershipByGroup = new Map<string, { role: 'owner' | 'admin' | 'member'; status: 'active' | 'pending' }>()
-    for (const memberDoc of membershipSnapshot.docs) {
-      const groupRef = memberDoc.ref.parent.parent
-      if (!groupRef) continue
-      groupIds.add(groupRef.id)
+    try {
+      const membershipSnapshot = await db.collectionGroup('members').where('uid', '==', uid).get()
+      for (const memberDoc of membershipSnapshot.docs) {
+        const groupRef = memberDoc.ref.parent.parent
+        if (!groupRef) continue
+        groupIds.add(groupRef.id)
 
-      const data = memberDoc.data()
-      const rawRole = String(data.role ?? 'member')
-      const rawStatus = String(data.status ?? 'pending')
-      membershipByGroup.set(groupRef.id, {
-        role: rawRole === 'owner' || rawRole === 'admin' ? rawRole : 'member',
-        status: rawStatus === 'active' ? 'active' : 'pending',
-      })
+        const data = memberDoc.data()
+        const rawRole = String(data.role ?? 'member')
+        const rawStatus = String(data.status ?? 'pending')
+        membershipByGroup.set(groupRef.id, {
+          role: rawRole === 'owner' || rawRole === 'admin' ? rawRole : 'member',
+          status: rawStatus === 'active' ? 'active' : 'pending',
+        })
+      }
+    } catch (error) {
+      logger.warn('getMyGroups collectionGroup fallback path triggered', { uid, error: String(error) })
+
+      // Fallback: scan groups and probe the user's member doc in each group.
+      const allGroupsSnapshot = await db.collection('groups').get()
+      await Promise.all(
+        allGroupsSnapshot.docs.map(async (groupDoc) => {
+          const memberDoc = await groupDoc.ref.collection('members').doc(uid).get()
+          if (!memberDoc.exists) return
+
+          groupIds.add(groupDoc.id)
+          const data = memberDoc.data() ?? {}
+          const rawRole = String(data.role ?? 'member')
+          const rawStatus = String(data.status ?? 'pending')
+          membershipByGroup.set(groupDoc.id, {
+            role: rawRole === 'owner' || rawRole === 'admin' ? rawRole : 'member',
+            status: rawStatus === 'active' ? 'active' : 'pending',
+          })
+        }),
+      )
     }
 
     const groupDocs = await Promise.all(Array.from(groupIds).map((groupId) => db.collection('groups').doc(groupId).get()))
@@ -1277,6 +1304,29 @@ export const getMyGroups = onCall(
     return {
       groups: Array.from(groupsById.values()).sort((a, b) => a.name.localeCompare(b.name)),
     }
+  },
+)
+export const getJoinableGroups = onCall(
+  {
+    region: 'us-central1',
+  },
+  async (request): Promise<GetJoinableGroupsResponse> => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication is required.')
+    }
+
+    const groupsSnapshot = await db.collection('groups').select('name').get()
+    const groups = groupsSnapshot.docs
+      .map((groupDoc) => {
+        const data = groupDoc.data() ?? {}
+        return {
+          id: groupDoc.id,
+          name: String(data.name ?? groupDoc.id),
+        }
+      })
+      .sort((a, b) => a.name.localeCompare(b.name))
+
+    return { groups }
   },
 )
 export const getWeeklyRecap = onCall(
