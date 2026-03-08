@@ -284,7 +284,7 @@ async function fetchPreseasonStatus(): Promise<PreseasonStatus> {
   }
 }
 
-async function fetchLiveRosterCounts(): Promise<{ driversCount: number; constructorsCount: number }> {
+async function fetchLiveRosterCounts(): Promise<LiveRosterCounts> {
   const [driversSnap, constructorsSnap] = await Promise.all([
     getDocs(collection(db, 'drivers')),
     getDocs(collection(db, 'constructors')),
