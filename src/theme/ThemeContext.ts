@@ -1,10 +1,11 @@
 import { createContext } from 'react'
+import type { TeamThemeId } from './teamThemes'
 
-export type ThemeMode = 'light' | 'dark'
+export type { TeamThemeId }
 
 export type ThemeContextValue = {
-  mode: ThemeMode
-  toggleMode: () => void
+  mode: TeamThemeId
+  setMode: (mode: TeamThemeId) => void
 }
 
 export const ThemeContext = createContext<ThemeContextValue | undefined>(undefined)

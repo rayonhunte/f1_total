@@ -22,6 +22,7 @@
 }
 
 :root[data-theme='dark'] {
+  color-scheme: dark;
   --bg: #0b1020;
   --bg-alt: #161b2f;
   --text: #f8fafc;
@@ -146,14 +147,28 @@ body {
   background: #dc2626;
 }
 
-:root[data-theme='dark'] .theme-toggle {
-  background: var(--accent);
-  color: var(--accent-ink);
-  border-color: #eab308;
+[data-theme] .theme-toggle {
+  background: var(--panel-solid);
+  color: var(--text);
+  border-color: var(--border);
 }
 
-:root[data-theme='dark'] .theme-toggle:hover {
-  background: var(--accent-strong);
+[data-theme] .theme-toggle:hover {
+  border-color: var(--accent);
+}
+
+:root[data-theme] input:-webkit-autofill,
+:root[data-theme] input:-webkit-autofill:hover,
+:root[data-theme] input:-webkit-autofill:focus,
+:root[data-theme] input:-webkit-autofill:active {
+  -webkit-text-fill-color: var(--text);
+  -webkit-box-shadow: 0 0 0 1000px var(--panel-solid) inset;
+  box-shadow: 0 0 0 1000px var(--panel-solid) inset;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+:root[data-theme] input.datetime-input {
+  color-scheme: dark;
 }
 
 .app-nav {
@@ -235,6 +250,12 @@ select {
   font: inherit;
   color: var(--text);
   background: var(--panel-solid);
+}
+
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
 }
 
 button {
@@ -554,6 +575,12 @@ button:focus-visible {
   padding: 0.45rem 0.6rem;
   display: grid;
   gap: 0.2rem;
+  min-width: 0;
+}
+
+.pick-summary-grid strong {
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .card-link-btn {
@@ -726,4 +753,286 @@ button:focus-visible {
     width: 100%;
     justify-content: space-between;
   }
+}
+
+@media (max-width: 480px) {
+  .app-shell {
+    padding: 0.75rem 1rem;
+  }
+
+  .pick-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .podium-grid,
+  .constructor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  input,
+  select,
+  button:not(.theme-toggle) {
+    min-height: 44px;
+  }
+
+  .nav-link {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+  }
+
+  .admin-tab-btn {
+    min-height: 44px;
+    padding: 0.5rem 0.85rem;
+  }
+
+  .race-chip {
+    min-height: 44px;
+    padding: 0.55rem 0.75rem;
+  }
+}
+
+/* ── Team themes ─────────────────────────────────────────────────────────── */
+
+:root[data-theme='ferrari'] {
+  color-scheme: dark;
+  --bg: #1a0505;
+  --bg-alt: #2a0a0a;
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  --panel: rgba(42, 8, 8, 0.88);
+  --panel-solid: #2a0808;
+  --border: #4a1010;
+  --accent: #da291c;
+  --accent-strong: #ef3a2a;
+  --accent-ink: #ffffff;
+  --danger: #fca5a5;
+  --success-bg: #064e3b;
+  --success-text: #86efac;
+  --shadow: 0 12px 35px rgba(0, 0, 0, 0.5);
+  --btn-bg: #da291c;
+  --btn-text: #ffffff;
+  --btn-border: #b91c1c;
+  --btn-bg-hover: #c0211a;
+}
+
+:root[data-theme='alpine'] {
+  color-scheme: dark;
+  --bg: #060f2a;
+  --bg-alt: #0a1640;
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  --panel: rgba(12, 24, 69, 0.88);
+  --panel-solid: #0c1845;
+  --border: #1a3060;
+  --accent: #ff88bd;
+  --accent-strong: #ff6baa;
+  --accent-ink: #111827;
+  --danger: #fca5a5;
+  --success-bg: #064e3b;
+  --success-text: #86efac;
+  --shadow: 0 12px 35px rgba(0, 0, 0, 0.5);
+  --btn-bg: #ff88bd;
+  --btn-text: #111827;
+  --btn-border: #e5649e;
+  --btn-bg-hover: #ff9fca;
+}
+
+:root[data-theme='aston_martin'] {
+  color-scheme: dark;
+  --bg: #021512;
+  --bg-alt: #052520;
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  --panel: rgba(7, 48, 40, 0.88);
+  --panel-solid: #073028;
+  --border: #1a4a44;
+  --accent: #b9c600;
+  --accent-strong: #d4e000;
+  --accent-ink: #111827;
+  --danger: #fca5a5;
+  --success-bg: #064e3b;
+  --success-text: #86efac;
+  --shadow: 0 12px 35px rgba(0, 0, 0, 0.5);
+  --btn-bg: #b9c600;
+  --btn-text: #111827;
+  --btn-border: #9baa00;
+  --btn-bg-hover: #ccda00;
+}
+
+:root[data-theme='haas'] {
+  color-scheme: dark;
+  --bg: #100003;
+  --bg-alt: #1a0005;
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  --panel: rgba(31, 0, 8, 0.88);
+  --panel-solid: #1f0008;
+  --border: #4a0010;
+  --accent: #e6002d;
+  --accent-strong: #ff0030;
+  --accent-ink: #ffffff;
+  --danger: #fca5a5;
+  --success-bg: #064e3b;
+  --success-text: #86efac;
+  --shadow: 0 12px 35px rgba(0, 0, 0, 0.5);
+  --btn-bg: #e6002d;
+  --btn-text: #ffffff;
+  --btn-border: #c00025;
+  --btn-bg-hover: #cc0028;
+}
+
+:root[data-theme='audi'] {
+  color-scheme: dark;
+  --bg: #0c0e12;
+  --bg-alt: #141820;
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  --panel: rgba(28, 32, 40, 0.88);
+  --panel-solid: #1c2028;
+  --border: #2a2e38;
+  --accent: #e8e8e8;
+  --accent-strong: #f5f5f5;
+  --accent-ink: #0c0e12;
+  --danger: #fca5a5;
+  --success-bg: #064e3b;
+  --success-text: #86efac;
+  --shadow: 0 12px 35px rgba(0, 0, 0, 0.5);
+  --btn-bg: #e8e8e8;
+  --btn-text: #0c0e12;
+  --btn-border: #cccccc;
+  --btn-bg-hover: #f5f5f5;
+}
+
+:root[data-theme='cadillac'] {
+  color-scheme: dark;
+  --bg: #0a0a0a;
+  --bg-alt: #141414;
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  --panel: rgba(28, 28, 28, 0.88);
+  --panel-solid: #1c1c1c;
+  --border: #2a2a2a;
+  --accent: #d4b896;
+  --accent-strong: #e0c8a8;
+  --accent-ink: #0a0a0a;
+  --danger: #fca5a5;
+  --success-bg: #064e3b;
+  --success-text: #86efac;
+  --shadow: 0 12px 35px rgba(0, 0, 0, 0.5);
+  --btn-bg: #d4b896;
+  --btn-text: #0a0a0a;
+  --btn-border: #b89a78;
+  --btn-bg-hover: #e0c8a8;
+}
+
+:root[data-theme='mclaren'] {
+  color-scheme: dark;
+  --bg: #1a0800;
+  --bg-alt: #270d00;
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  --panel: rgba(46, 16, 0, 0.88);
+  --panel-solid: #2e1000;
+  --border: #4a2000;
+  --accent: #ff8000;
+  --accent-strong: #ff9524;
+  --accent-ink: #111827;
+  --danger: #fca5a5;
+  --success-bg: #064e3b;
+  --success-text: #86efac;
+  --shadow: 0 12px 35px rgba(0, 0, 0, 0.5);
+  --btn-bg: #ff8000;
+  --btn-text: #111827;
+  --btn-border: #cc6600;
+  --btn-bg-hover: #ff9524;
+}
+
+:root[data-theme='mercedes'] {
+  color-scheme: dark;
+  --bg: #001410;
+  --bg-alt: #001e18;
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  --panel: rgba(0, 40, 32, 0.88);
+  --panel-solid: #002820;
+  --border: #004a44;
+  --accent: #00f5d0;
+  --accent-strong: #00e0bc;
+  --accent-ink: #111827;
+  --danger: #fca5a5;
+  --success-bg: #064e3b;
+  --success-text: #86efac;
+  --shadow: 0 12px 35px rgba(0, 0, 0, 0.5);
+  --btn-bg: #00f5d0;
+  --btn-text: #111827;
+  --btn-border: #00c8a8;
+  --btn-bg-hover: #00e0bc;
+}
+
+:root[data-theme='racing_bulls'] {
+  color-scheme: dark;
+  --bg: #04061a;
+  --bg-alt: #070a28;
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  --panel: rgba(10, 14, 53, 0.88);
+  --panel-solid: #0a0e35;
+  --border: #15205a;
+  --accent: #e8eeff;
+  --accent-strong: #d0d8ff;
+  --accent-ink: #070b36;
+  --danger: #fca5a5;
+  --success-bg: #064e3b;
+  --success-text: #86efac;
+  --shadow: 0 12px 35px rgba(0, 0, 0, 0.5);
+  --btn-bg: #e8eeff;
+  --btn-text: #070b36;
+  --btn-border: #c0ccee;
+  --btn-bg-hover: #d0d8ff;
+}
+
+:root[data-theme='redbull'] {
+  color-scheme: dark;
+  --bg: #00040e;
+  --bg-alt: #000c18;
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  --panel: rgba(0, 16, 32, 0.88);
+  --panel-solid: #001020;
+  --border: #002555;
+  --accent: #db0a40;
+  --accent-strong: #f00a45;
+  --accent-ink: #ffffff;
+  --danger: #fca5a5;
+  --success-bg: #064e3b;
+  --success-text: #86efac;
+  --shadow: 0 12px 35px rgba(0, 0, 0, 0.5);
+  --btn-bg: #db0a40;
+  --btn-text: #ffffff;
+  --btn-border: #b00830;
+  --btn-bg-hover: #c00838;
+}
+
+:root[data-theme='williams'] {
+  color-scheme: dark;
+  --bg: #000410;
+  --bg-alt: #000818;
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  --panel: rgba(0, 12, 34, 0.88);
+  --panel-solid: #000c22;
+  --border: #0a1a3a;
+  --accent: #2270ff;
+  --accent-strong: #3d85ff;
+  --accent-ink: #ffffff;
+  --danger: #fca5a5;
+  --success-bg: #064e3b;
+  --success-text: #86efac;
+  --shadow: 0 12px 35px rgba(0, 0, 0, 0.5);
+  --btn-bg: #2270ff;
+  --btn-text: #ffffff;
+  --btn-border: #1a55cc;
+  --btn-bg-hover: #3d85ff;
 }
