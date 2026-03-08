@@ -501,9 +501,13 @@ export function AdminPage() {
 
   useEffect(() => {
     if (activeTab !== 'simulation') return
-    setCountdownNow(Date.now())
-    const timer = setInterval(() => setCountdownNow(Date.now()), 1000)
-    return () => clearInterval(timer)
+    const tick = () => setCountdownNow(Date.now())
+    const id = setTimeout(tick, 0)
+    const timer = setInterval(tick, 1000)
+    return () => {
+      clearTimeout(id)
+      clearInterval(timer)
+    }
   }, [activeTab])
 
   const approveMutation = useMutation({
