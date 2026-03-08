@@ -134,6 +134,7 @@ service cloud.firestore {
               'email',
               'role',
               'status',
+              'requestedAt',
               'joinedAt',
               'approvedAt',
               'approvedBy',
