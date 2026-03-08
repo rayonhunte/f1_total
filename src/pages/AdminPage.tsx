@@ -123,6 +123,13 @@ type ScoringConfig = {
   constructors: ConstructorOption[]
 }
 
+type AdminRaceOption = {
+  id: string
+  name: string
+  round: number
+  circuitTimezone?: string
+}
+
 type UpdateSeasonScoringRulesRequest = {
   seasonId?: string
   scoringRules: ScoringRulesForm
@@ -138,6 +145,13 @@ type GroupRaceSyncResponse = {
   raceId: string
   groupId: string
   scoredPicks: number
+}
+
+type RaceSyncResponse = {
+  seasonId: string
+  raceId: string
+  scoredPicks: number
+  alreadySynced?: boolean
 }
 
 type AdminTabKey = 'invite' | 'preseason' | 'scoring' | 'simulation' | 'members'
@@ -381,6 +395,21 @@ async function fetchScoringConfig(seasonId: string): Promise<ScoringConfig> {
   }
 }
 
+async function fetchRacesForAdmin(seasonId: string): Promise<AdminRaceOption[]> {
+  const racesSnap = await getDocs(query(collection(db, 'races'), where('seasonId', '==', seasonId)))
+  return racesSnap.docs
+    .map((doc) => {
+      const data = doc.data()
+      return {
+        id: doc.id,
+        name: (data.name as string | undefined) ?? doc.id,
+        round: Number(data.round ?? 0),
+        circuitTimezone: (data.circuitTimezone as string | undefined) || undefined,
+      }
+    })
+    .sort((a, b) => a.round - b.round)
+}
+
 async function fetchGroupAdminData(groupId: string): Promise<GroupAdminData> {
   const groupSnap = await getDoc(doc(db, 'groups', groupId))
   if (!groupSnap.exists()) throw new Error('Group not found.')
@@ -434,10 +463,12 @@ export function AdminPage() {
   const [circuitTimezone, setCircuitTimezone] = useState('')
   const [activateSeason, setActivateSeason] = useState(true)
   const [seedDefaultRoster, setSeedDefaultRoster] = useState(true)
+  const [raceTimezoneRaceId, setRaceTimezoneRaceId] = useState('')
+  const [raceTimezoneValue, setRaceTimezoneValue] = useState('')
   const [scoringRulesForm, setScoringRulesForm] = useState<ScoringRulesForm>(DEFAULT_SCORING_RULES)
   const [scoringNotice, setScoringNotice] = useState<string | null>(null)
   const [groupSyncNotice, setGroupSyncNotice] = useState<string | null>(null)
-  const [countdownNow, setCountdownNow] = useState(() => Date.now())
+  const [raceSyncNotice, setRaceSyncNotice] = useState<string | null>(null)
 
   const groupQuery = useQuery({
     queryKey: ['group-admin', activeGroupId],
@@ -456,28 +487,10 @@ export function AdminPage() {
     enabled: Boolean(preseasonQuery.data?.selectedSeasonId),
   })
 
-  const selectedSeasonId = preseasonQuery.data?.selectedSeasonId ?? null
-  const selectedSeasonYear = preseasonQuery.data?.selectedSeasonYear ?? null
-  const liveRosterQuery = useQuery({
-    queryKey: ['live-roster-counts', selectedSeasonId, selectedSeasonYear],
-    queryFn: async ({ queryKey }): Promise<LiveRosterCounts> => {
-      const [, seasonId, seasonYear] = queryKey as [string, string | null, number | null]
-      if (!seasonId) throw new Error('No season selected')
-      const callable = httpsCallable<{ seasonId: string; seasonYear?: number }, { drivers: unknown[]; constructors: unknown[] }>(
-        functions,
-        'getLiveRoster',
-      )
-      const res = await callable({ seasonId, seasonYear: seasonYear ?? undefined })
-      return {
-        driversCount: (res.data.drivers ?? []).length,
-        constructorsCount: (res.data.constructors ?? []).length,
-      }
-    },
-    enabled:
-      Boolean(selectedSeasonId) &&
-      selectedSeasonYear != null &&
-      selectedSeasonYear >= 1950 &&
-      selectedSeasonYear <= 2100,
+  const adminRacesQuery = useQuery({
+    queryKey: ['admin-races', preseasonQuery.data?.selectedSeasonId],
+    queryFn: () => fetchRacesForAdmin(preseasonQuery.data!.selectedSeasonId!),
+    enabled: Boolean(preseasonQuery.data?.selectedSeasonId),
   })
 
   useEffect(() => {
@@ -576,6 +589,24 @@ export function AdminPage() {
     },
   })
 
+  const updateRaceTimezoneMutation = useMutation({
+    mutationFn: async ({ raceId, circuitTimezone }: { raceId: string; circuitTimezone: string }) => {
+      const callable = httpsCallable<
+        { raceId: string; circuitTimezone: string },
+        { raceId: string; circuitTimezone: string | null }
+      >(functions, 'updateRaceCircuitTimezone')
+      await callable({ raceId, circuitTimezone })
+    },
+    onSuccess: async () => {
+      setActionError(null)
+      await queryClient.invalidateQueries({ queryKey: ['admin-races', preseasonQuery.data?.selectedSeasonId] })
+      await queryClient.invalidateQueries({ queryKey: ['picks-bootstrap'] })
+    },
+    onError: (error) => {
+      setActionError(error instanceof Error ? error.message : 'Failed to update race timezone')
+    },
+  })
+
   const scoringMutation = useMutation({
     mutationFn: async () => {
       if (!scoringQuery.data?.seasonId) {
@@ -643,6 +674,37 @@ export function AdminPage() {
     onError: (error) => {
       setGroupSyncNotice(null)
       setActionError(error instanceof Error ? error.message : 'Failed to run group scoring sync.')
+    },
+  })
+
+  const raceSyncMutation = useMutation({
+    mutationFn: async () => {
+      const callable = httpsCallable<{ seasonId?: string; raceId?: string }, RaceSyncResponse>(
+        functions,
+        'adminRunRaceSync',
+      )
+      const response = await callable({
+        seasonId: scoringQuery.data?.seasonId ?? preseasonQuery.data?.selectedSeasonId ?? undefined,
+      })
+      return response.data
+    },
+    onSuccess: async (result) => {
+      setActionError(null)
+      setRaceSyncNotice(
+        result.alreadySynced
+          ? `Race ${result.raceId} already synced. No changes.`
+          : `Race sync completed: ${result.raceId}. Scored ${result.scoredPicks} picks.`,
+      )
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['picks-bootstrap'] }),
+        queryClient.invalidateQueries({ queryKey: ['leaderboard'] }),
+        queryClient.invalidateQueries({ queryKey: ['dashboard-current-pick'] }),
+        queryClient.invalidateQueries({ queryKey: ['weekly-recap'] }),
+      ])
+    },
+    onError: (error) => {
+      setRaceSyncNotice(null)
+      setActionError(error instanceof Error ? error.message : 'Failed to run race sync. Requires platform admin.')
     },
   })
 
@@ -898,6 +960,17 @@ export function AdminPage() {
               </label>
 
               <label>
+                Race timezone (for display)
+                <select value={circuitTimezone} onChange={(event) => setCircuitTimezone(event.target.value)}>
+                  {F1_CIRCUIT_TIMEZONES.map(({ value, label }) => (
+                    <option key={value || 'none'} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
                 Activate this season
                 <select
                   value={activateSeason ? 'yes' : 'no'}
@@ -924,6 +997,70 @@ export function AdminPage() {
               </button>
             </form>
             {setupNotice ? <p className="notice-text">{setupNotice}</p> : null}
+
+            <div className="admin-card">
+              <h3>Set race timezone</h3>
+              <p>Set the circuit timezone for a race so lock times display in the race&apos;s local time.</p>
+              {adminRacesQuery.isLoading ? <p>Loading races...</p> : null}
+              {adminRacesQuery.isError ? (
+                <p className="validation-error">{(adminRacesQuery.error as Error).message}</p>
+              ) : null}
+              {adminRacesQuery.data && adminRacesQuery.data.length > 0 ? (
+                <form
+                  className="auth-form preseason-form"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    if (!raceTimezoneRaceId) return
+                    updateRaceTimezoneMutation.mutate({
+                      raceId: raceTimezoneRaceId,
+                      circuitTimezone: raceTimezoneValue,
+                    })
+                  }}
+                >
+                  <label>
+                    Race
+                    <select
+                      value={raceTimezoneRaceId}
+                      onChange={(e) => {
+                        setRaceTimezoneRaceId(e.target.value)
+                        const race = adminRacesQuery.data?.find((r) => r.id === e.target.value)
+                        setRaceTimezoneValue(race?.circuitTimezone ?? '')
+                      }}
+                    >
+                      <option value="">— Select race —</option>
+                      {adminRacesQuery.data.map((race) => (
+                        <option key={race.id} value={race.id}>
+                          R{race.round} – {race.name}
+                          {race.circuitTimezone ? ` (${race.circuitTimezone})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Circuit timezone
+                    <select
+                      value={raceTimezoneValue}
+                      onChange={(e) => setRaceTimezoneValue(e.target.value)}
+                      disabled={!raceTimezoneRaceId}
+                    >
+                      {F1_CIRCUIT_TIMEZONES.map(({ value, label }) => (
+                        <option key={value || 'none'} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={!raceTimezoneRaceId || updateRaceTimezoneMutation.isPending}
+                  >
+                    {updateRaceTimezoneMutation.isPending ? 'Updating...' : 'Update race timezone'}
+                  </button>
+                </form>
+              ) : adminRacesQuery.data ? (
+                <p>No races in the selected season.</p>
+              ) : null}
+            </div>
           </div>
         ) : null}
 
@@ -1320,6 +1457,21 @@ export function AdminPage() {
               onClick={() => {
                 setActionError(null)
                 setGroupSyncNotice(null)
+                setRaceSyncNotice(null)
+                raceSyncMutation.mutate()
+              }}
+              disabled={raceSyncMutation.isPending}
+            >
+              {raceSyncMutation.isPending ? 'Syncing...' : 'Sync race results'}
+            </button>
+            {raceSyncNotice ? <p className="notice-text">{raceSyncNotice}</p> : null}
+            <p>Ingests results from API and marks race closed. Requires platform admin. Skips if already synced.</p>
+            <button
+              type="button"
+              onClick={() => {
+                setActionError(null)
+                setGroupSyncNotice(null)
+                setRaceSyncNotice(null)
                 groupSyncMutation.mutate()
               }}
               disabled={groupSyncMutation.isPending}
