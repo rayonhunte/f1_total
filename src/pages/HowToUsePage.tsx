@@ -41,14 +41,38 @@ const featureGuides = [
     ],
   },
   {
-    title: '7. Weekly Recap Card',
+    title: '6. Groups and signing in',
+    howTo: [
+      'After sign-in you land on the Groups page. You are not auto-redirected to the app.',
+      'If you own or belong to groups, use "Go to [group name]" to open that group in the app.',
+      'You can join another group anytime: select a group from the dropdown and enter the invite code (even if you already own a group or are in another).',
+      'Create a new group or request access to an existing one from the same page.',
+    ],
+  },
+  {
+    title: '7. Group messages',
+    howTo: [
+      'Open Messages from the app nav to see your group chat.',
+      'Type in the composer to post. Use @ to mention other members; pick from the dropdown to tag them.',
+      'Edit or delete your own messages via the controls on each message.',
+    ],
+  },
+  {
+    title: '8. Team themes',
+    howTo: [
+      'Use the theme dropdown in the header (next to the nav) to switch the app to a team colour theme.',
+      'Your choice is saved and applied on future visits.',
+    ],
+  },
+  {
+    title: '9. Weekly Recap Card',
     howTo: [
       'Open Leaderboard after scoring sync.',
       'Review biggest mover, best pick, worst miss, and closest podium guess.',
     ],
   },
   {
-    title: '8. Notifications (In-App)',
+    title: '10. Notifications (In-App)',
     howTo: [
       'Go to Dashboard -> Notifications to view recent events.',
       'Toggle email/push preferences in notification settings.',
@@ -56,21 +80,21 @@ const featureGuides = [
     ],
   },
   {
-    title: '9. Pick History + Head-to-Head',
+    title: '11. Pick History + Head-to-Head',
     howTo: [
       'Open Leaderboard and pick a member in Head-to-Head.',
       'Compare race-by-race points versus your opponent.',
     ],
   },
   {
-    title: '10. Season Awards',
+    title: '12. Season Awards',
     howTo: [
       'Open Leaderboard and check Season Awards.',
       'Awards include most accurate, risk taker, and comeback of the year.',
     ],
   },
   {
-    title: '11. Admin Simulation Tool',
+    title: '13. Admin Simulation Tool',
     howTo: [
       'Open Admin -> Simulation.',
       'Run simulation with current scoring form values against past races.',
@@ -78,7 +102,7 @@ const featureGuides = [
     ],
   },
   {
-    title: '12. Anti-Dead-Team Auto-Suggest',
+    title: '14. Anti-Dead-Team Auto-Suggest',
     howTo: [
       'In Picks, if selected drivers show poor recent reliability, you will see warnings.',
       'Use suggested swaps to improve lineup stability before lock.',
@@ -92,15 +116,18 @@ export function HowToUsePage() {
       <section>
         <h2>How To Use F1 Total</h2>
         <p>
-          This guide covers the currently enabled feature set. Private mini-leagues inside a group (item 6) are
-          intentionally excluded.
+          This guide covers the currently enabled feature set, including groups and sign-in, group messages, team
+          themes, picks, leaderboard, and admin tools.
         </p>
         <p>
-          New player flow: sign in, create or join a group, submit picks before lock, then follow leaderboard and recap
-          cards each race week.
+          New player flow: sign in (you land on the Groups page), create or join a group, use &quot;Go to [group name]&quot; to
+          enter the app, submit picks before lock, then follow leaderboard and recap cards each race week. You can join
+          multiple groups and switch between them from the Groups page.
         </p>
         <p>
-          Quick links: <Link to="/app/picks" className="inline-link">Picks</Link> |{' '}
+          Quick links: <Link to="/groups" className="inline-link">Groups</Link> |{' '}
+          <Link to="/app/picks" className="inline-link">Picks</Link> |{' '}
+          <Link to="/app/messages" className="inline-link">Messages</Link> |{' '}
           <Link to="/app/leaderboard" className="inline-link">Leaderboard</Link> |{' '}
           <Link to="/app/admin" className="inline-link">Admin</Link>
         </p>

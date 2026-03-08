@@ -55,29 +55,61 @@
   box-sizing: border-box;
 }
 
+html {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
   background: radial-gradient(circle at 12% 12%, var(--bg-alt), var(--bg));
   color: var(--text);
+  overflow-x: hidden;
+  max-width: 100vw;
 }
 
 #root {
   width: 100%;
+  min-width: 0;
+  max-width: 100vw;
+  overflow-x: hidden;
 }
 
 .app-shell {
   max-width: 980px;
+  width: 100%;
+  min-width: 0;
   margin: 0 auto;
   padding: 1.5rem;
+  box-sizing: border-box;
+}
+
+.app-shell main {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.header-brand {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.header-brand h1 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .app-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 1rem;
   margin-bottom: 1.5rem;
+  min-width: 0;
 }
 
 .app-header h1 {
@@ -89,11 +121,163 @@ body {
   color: var(--muted);
 }
 
-.header-actions {
+.header-menu-btn {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--panel-solid);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.header-menu-icon {
+  display: block;
+  width: 20px;
+  height: 2px;
+  background: currentColor;
+  box-shadow: 0 -6px 0 currentColor, 0 6px 0 currentColor;
+}
+
+.side-nav-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 100;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.side-nav-overlay-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.side-nav-panel {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 280px;
+  max-width: 85vw;
+  height: 100vh;
+  background: var(--panel-solid);
+  border-right: 1px solid var(--border);
+  z-index: 101;
+  overflow-y: auto;
+  transform: translateX(-100%);
+  transition: transform 0.25s ease;
+  box-shadow: none;
+}
+
+.side-nav-panel-open {
+  transform: translateX(0);
+  box-shadow: 8px 0 24px rgba(0, 0, 0, 0.15);
+}
+
+.side-nav-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.side-nav-title {
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+.side-nav-close {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: 0.45rem;
+  background: transparent;
+  color: var(--text);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.side-nav-close:hover {
+  background: var(--bg-alt);
+}
+
+.side-nav-group {
+  margin: 0;
+  padding: 0.75rem 1.25rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.side-nav-group .inline-link {
+  display: inline-block;
+  margin-left: 0.35rem;
+}
+
+.side-nav-links {
+  display: flex;
+  flex-direction: column;
+  padding: 0.75rem 0;
+}
+
+.side-nav-link {
+  display: block;
+  padding: 0.75rem 1.25rem;
+  text-decoration: none;
+  color: var(--text);
+  border: none;
+  border-left: 3px solid transparent;
+  background: transparent;
+  text-align: left;
+  font-size: 1rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.side-nav-link:hover {
+  background: var(--bg-alt);
+}
+
+.side-nav-link.active {
+  background: color-mix(in oklab, var(--accent) 25%, transparent);
+  border-left-color: var(--accent);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.side-nav-footer {
+  margin-top: auto;
+  padding: 1rem 1.25rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
   gap: 0.75rem;
+}
+
+.side-nav-theme {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.side-nav-user {
+  font-size: 0.9rem;
+}
+
+.side-nav-signout {
+  width: 100%;
+  justify-content: center;
 }
 
 .theme-toggle {
@@ -222,6 +406,19 @@ section,
 
 section {
   padding: 1rem 1.25rem;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+section p,
+section strong,
+section h2,
+section h3,
+section h4 {
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .auth-card {
@@ -313,20 +510,41 @@ button:focus-visible {
   margin-top: 1rem;
 }
 
-.leaderboard-table {
+.leaderboard-table,
+.stats-table {
   width: 100%;
   border-collapse: collapse;
   min-width: 540px;
 }
 
 .leaderboard-table th,
-.leaderboard-table td {
+.leaderboard-table td,
+.stats-table th,
+.stats-table td {
   text-align: left;
   padding: 0.6rem;
   border-bottom: 1px solid var(--border);
 }
 
+.stats-race-block { margin-bottom: 1rem; }
+.stats-driver-block { margin-bottom: 1.5rem; }
+
+.stats-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-top: 0.5rem;
+}
+
+.stats-select-label {
+  display: block;
+}
+
+.stats-select-label .stats-select {
+  margin-top: 0.35rem;
+}
+
 .leaderboard-table th,
+.stats-table th,
 .pick-summary-grid span,
 .groups-list p,
 .feature-card p,
@@ -505,6 +723,10 @@ button:focus-visible {
 .admin-card {
   margin-top: 1rem;
   padding: 0.85rem;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .admin-tabs {
@@ -737,27 +959,57 @@ button:focus-visible {
 
 @media (max-width: 700px) {
   .app-header {
-    flex-direction: column;
-  }
-
-  .header-actions {
-    width: 100%;
-    align-items: flex-start;
-  }
-
-  .app-nav {
+    flex-direction: row;
+    align-items: center;
     flex-wrap: wrap;
   }
 
-  .user-actions {
+  .header-brand .header-subtitle,
+  .header-brand .header-group {
+    display: none;
+  }
+
+  .header-brand h1 {
+    font-size: 1.25rem;
+  }
+}
+
+@media (max-width: 600px) {
+  .stats-page .stats-select-label .stats-select {
     width: 100%;
-    justify-content: space-between;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .stats-table-wrap {
+    margin-left: -0.25rem;
+    margin-right: -0.25rem;
+    padding-left: 0.25rem;
+    padding-right: 0.25rem;
+  }
+
+  .stats-page .stats-table {
+    min-width: 380px;
+  }
+
+  .stats-page .stats-table th,
+  .stats-page .stats-table td {
+    padding: 0.5rem 0.4rem;
+    font-size: 0.875rem;
   }
 }
 
 @media (max-width: 480px) {
   .app-shell {
     padding: 0.75rem 1rem;
+  }
+
+  .stats-page h2 {
+    font-size: 1.25rem;
+  }
+
+  .stats-page > p {
+    font-size: 0.9rem;
   }
 
   .pick-summary-grid {

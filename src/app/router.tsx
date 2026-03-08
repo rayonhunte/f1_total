@@ -12,6 +12,7 @@ import { LeaderboardPage } from '../pages/LeaderboardPage'
 import { LoginPage } from '../pages/LoginPage'
 import { MessagesPage } from '../pages/MessagesPage'
 import { PicksPage } from '../pages/PicksPage'
+import { RaceStatsPage } from '../pages/RaceStatsPage'
 
 export const router = createBrowserRouter([
   {
@@ -48,6 +49,7 @@ export const router = createBrowserRouter([
       { path: 'picks', element: <PicksPage /> },
       { path: 'messages', element: <MessagesPage /> },
       { path: 'leaderboard', element: <LeaderboardPage /> },
+      { path: 'stats', element: <RaceStatsPage /> },
       {
         path: 'admin',
         element: (
