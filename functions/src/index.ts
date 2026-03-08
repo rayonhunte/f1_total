@@ -1040,6 +1040,18 @@ export const syncLatestResultsAndScores = onSchedule(
   },
 )
 
+async function postSystemMessageToGroup(groupId: string, text: string): Promise<void> {
+  try {
+    await db.collection('groups').doc(groupId).collection('messages').add({
+      type: 'system',
+      text,
+      createdAt: FieldValue.serverTimestamp(),
+    })
+  } catch (error) {
+    logger.warn('Failed to post system message to group', { groupId, error: String(error) })
+  }
+}
+
 export const ownerRunGroupRaceSync = onCall(
   {
     region: 'us-central1',
@@ -1079,6 +1091,8 @@ export const ownerRunGroupRaceSync = onCall(
     }
 
     const scoredPicks = await recomputeGroupRaceScores(seasonId, raceId, groupId, result)
+    const syncTime = new Date().toISOString()
+    await postSystemMessageToGroup(groupId, `Leaderboard synced at ${syncTime}.`)
     return { seasonId, raceId, groupId, scoredPicks }
   },
 )

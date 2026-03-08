@@ -10,6 +10,7 @@ import { HowToUsePage } from '../pages/HowToUsePage'
 import { LandingPage } from '../pages/LandingPage'
 import { LeaderboardPage } from '../pages/LeaderboardPage'
 import { LoginPage } from '../pages/LoginPage'
+import { MessagesPage } from '../pages/MessagesPage'
 import { PicksPage } from '../pages/PicksPage'
 
 export const router = createBrowserRouter([
@@ -45,6 +46,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <DashboardPage /> },
       { path: 'picks', element: <PicksPage /> },
+      { path: 'messages', element: <MessagesPage /> },
       { path: 'leaderboard', element: <LeaderboardPage /> },
       {
         path: 'admin',
