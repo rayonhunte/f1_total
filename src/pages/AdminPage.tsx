@@ -148,6 +148,13 @@ type GroupRaceSyncResponse = {
   scoredPicks: number
 }
 
+type RaceSyncResponse = {
+  seasonId: string
+  raceId: string
+  scoredPicks: number
+  alreadySynced?: boolean
+}
+
 type AdminTabKey = 'invite' | 'preseason' | 'scoring' | 'simulation' | 'members'
 
 const DEFAULT_SCORING_RULES: ScoringRulesForm = {
@@ -430,6 +437,7 @@ export function AdminPage() {
   const [scoringNotice, setScoringNotice] = useState<string | null>(null)
   const [simulationResult, setSimulationResult] = useState<SimulateSeasonScoringResponse | null>(null)
   const [groupSyncNotice, setGroupSyncNotice] = useState<string | null>(null)
+  const [raceSyncNotice, setRaceSyncNotice] = useState<string | null>(null)
 
   const groupQuery = useQuery({
     queryKey: ['group-admin', activeGroupId],
@@ -656,6 +664,37 @@ export function AdminPage() {
     onError: (error) => {
       setGroupSyncNotice(null)
       setActionError(error instanceof Error ? error.message : 'Failed to run group scoring sync.')
+    },
+  })
+
+  const raceSyncMutation = useMutation({
+    mutationFn: async () => {
+      const callable = httpsCallable<{ seasonId?: string; raceId?: string }, RaceSyncResponse>(
+        functions,
+        'adminRunRaceSync',
+      )
+      const response = await callable({
+        seasonId: scoringQuery.data?.seasonId ?? preseasonQuery.data?.selectedSeasonId ?? undefined,
+      })
+      return response.data
+    },
+    onSuccess: async (result) => {
+      setActionError(null)
+      setRaceSyncNotice(
+        result.alreadySynced
+          ? `Race ${result.raceId} already synced. No changes.`
+          : `Race sync completed: ${result.raceId}. Scored ${result.scoredPicks} picks.`,
+      )
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['picks-bootstrap'] }),
+        queryClient.invalidateQueries({ queryKey: ['leaderboard'] }),
+        queryClient.invalidateQueries({ queryKey: ['dashboard-current-pick'] }),
+        queryClient.invalidateQueries({ queryKey: ['weekly-recap'] }),
+      ])
+    },
+    onError: (error) => {
+      setRaceSyncNotice(null)
+      setActionError(error instanceof Error ? error.message : 'Failed to run race sync. Requires platform admin.')
     },
   })
 
@@ -1367,6 +1406,21 @@ export function AdminPage() {
               onClick={() => {
                 setActionError(null)
                 setGroupSyncNotice(null)
+                setRaceSyncNotice(null)
+                raceSyncMutation.mutate()
+              }}
+              disabled={raceSyncMutation.isPending}
+            >
+              {raceSyncMutation.isPending ? 'Syncing...' : 'Sync race results'}
+            </button>
+            {raceSyncNotice ? <p className="notice-text">{raceSyncNotice}</p> : null}
+            <p>Ingests results from API and marks race closed. Requires platform admin. Skips if already synced.</p>
+            <button
+              type="button"
+              onClick={() => {
+                setActionError(null)
+                setGroupSyncNotice(null)
+                setRaceSyncNotice(null)
                 groupSyncMutation.mutate()
               }}
               disabled={groupSyncMutation.isPending}
