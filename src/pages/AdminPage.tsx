@@ -33,11 +33,6 @@ type PreseasonStatus = {
   constructorsCount: number
 }
 
-type LiveRosterCounts = {
-  driversCount: number
-  constructorsCount: number
-}
-
 type InitializeSeasonResponse = {
   seasonId: string
   raceId: string
