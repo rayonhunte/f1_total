@@ -38,6 +38,7 @@ type RaceInfo = {
   round: number
   raceStartAt?: string
   lockAt?: string
+  circuitTimezone?: string
   status?: 'scheduled' | 'in_progress' | 'completed' | 'results_ingested'
 }
 
@@ -346,33 +347,31 @@ export function PicksPage() {
   })
 
   useEffect(() => {
-    const currentRaceId = bootstrapQuery.data?.race.id
+    const currentRaceId = bootstrapQuery.data?.race?.id
     if (!currentRaceId) return
     if (selectedRaceId !== currentRaceId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync selected race when bootstrap race changes
       setSelectedRaceId(currentRaceId)
     }
-  }, [bootstrapQuery.data?.race.id, selectedRaceId])
+  }, [bootstrapQuery.data?.race?.id, selectedRaceId])
 
+  const existingPodium = bootstrapQuery.data?.existingPick?.podium
+  const existingCaptain = bootstrapQuery.data?.existingPick?.captainDriverId
+  const existingWildcard = bootstrapQuery.data?.existingPick?.wildcard
   useEffect(() => {
-    const existingPodium = bootstrapQuery.data?.existingPick?.podium
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync form from server when existing pick loads
     setPodiumSelections({
       p1: existingPodium?.p1 ?? '',
       p2: existingPodium?.p2 ?? '',
       p3: existingPodium?.p3 ?? '',
     })
-    setCaptainDriverId(bootstrapQuery.data?.existingPick?.captainDriverId ?? '')
-    setWildcardEnabled(bootstrapQuery.data?.existingPick?.wildcard === true)
-  }, [
-    bootstrapQuery.data?.race.id,
-    bootstrapQuery.data?.existingPick?.podium.p1,
-    bootstrapQuery.data?.existingPick?.podium.p2,
-    bootstrapQuery.data?.existingPick?.podium.p3,
-    bootstrapQuery.data?.existingPick?.captainDriverId,
-    bootstrapQuery.data?.existingPick?.wildcard,
-  ])
+    setCaptainDriverId(existingCaptain ?? '')
+    setWildcardEnabled(existingWildcard === true)
+  }, [existingPodium?.p1, existingPodium?.p2, existingPodium?.p3, existingCaptain, existingWildcard])
 
   const lockInfo = useMemo(() => {
-    if (!bootstrapQuery.data?.race) {
+    const race = bootstrapQuery.data?.race
+    if (!race) {
       return {
         effectiveLockAt: null as Date | null,
         isLocked: false,
@@ -380,8 +379,8 @@ export function PicksPage() {
         stateLabel: 'Open',
       }
     }
-    return computeRaceLockInfo(bootstrapQuery.data.race, new Date(nowMs))
-  }, [bootstrapQuery.data?.race, nowMs])
+    return computeRaceLockInfo(race, new Date(nowMs))
+  }, [bootstrapQuery.data, nowMs])
 
   const focusRaceId = useMemo(() => {
     const data = bootstrapQuery.data
