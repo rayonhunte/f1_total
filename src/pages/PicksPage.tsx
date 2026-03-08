@@ -38,7 +38,7 @@ type RaceInfo = {
   round: number
   raceStartAt?: string
   lockAt?: string
-  status?: 'scheduled' | 'in_progress' | 'completed'
+  status?: 'scheduled' | 'in_progress' | 'completed' | 'results_ingested'
 }
 
 type LiveRosterRequest = {
@@ -116,12 +116,12 @@ function computeRaceLockInfo(race: RaceInfo, now: Date) {
   const raceStart = toDate(race.raceStartAt)
   const effectiveLockAt = lockAt ?? raceStart
   const status = race.status ?? 'scheduled'
-  const isStatusLocked = status === 'in_progress' || status === 'completed'
+  const isStatusLocked = status === 'in_progress' || status === 'completed' || status === 'results_ingested'
   const isTimeLocked = effectiveLockAt ? effectiveLockAt <= now : false
   const isLocked = isStatusLocked || isTimeLocked
 
   let stateLabel = 'Open'
-  if (status === 'completed') stateLabel = 'Completed'
+  if (status === 'completed' || status === 'results_ingested') stateLabel = 'Completed'
   else if (status === 'in_progress') stateLabel = 'In Progress (Locked)'
   else if (isLocked) stateLabel = 'Locked'
 
@@ -163,7 +163,9 @@ async function fetchRacesForSeason(seasonId: string): Promise<RaceInfo[]> {
       const data = raceDoc.data()
       const rawStatus = (data.status as string | undefined) ?? 'scheduled'
       const status: RaceInfo['status'] =
-        rawStatus === 'completed' || rawStatus === 'in_progress' ? rawStatus : 'scheduled'
+        rawStatus === 'completed' || rawStatus === 'in_progress' || rawStatus === 'results_ingested'
+          ? rawStatus
+          : 'scheduled'
 
       return {
         id: raceDoc.id,
