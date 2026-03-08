@@ -168,6 +168,16 @@ export function LeaderboardPage() {
     enabled: Boolean(activeGroupId && user?.uid && compareUid),
   })
 
+  const data = leaderboardQuery.data
+  const entries = useMemo(
+    () => data?.leaderboard.entries ?? [],
+    [data?.leaderboard.entries],
+  )
+  const compareOptions = useMemo(
+    () => entries.filter((entry) => entry.uid !== user?.uid),
+    [entries, user?.uid],
+  )
+
   if (leaderboardQuery.isLoading) {
     return (
       <section>
@@ -185,13 +195,6 @@ export function LeaderboardPage() {
       </section>
     )
   }
-
-  const data = leaderboardQuery.data
-  const entries = data?.leaderboard.entries ?? []
-  const compareOptions = useMemo(
-    () => entries.filter((entry) => entry.uid !== user?.uid),
-    [entries, user?.uid],
-  )
 
   return (
     <section>

@@ -456,6 +456,7 @@ export function AdminPage() {
 
   useEffect(() => {
     if (!scoringQuery.data) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync form from server when season loads
     setScoringRulesForm(scoringQuery.data.scoringRules)
   }, [scoringQuery.data])
 
