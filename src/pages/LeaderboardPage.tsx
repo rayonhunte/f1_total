@@ -284,13 +284,13 @@ export function LeaderboardPage() {
             <p>
               Most accurate:{' '}
               {awardsQuery.data.mostAccurate
-                ? `${awardsQuery.data.mostAccurate.uid} (${awardsQuery.data.mostAccurate.score})`
+                ? `${uidToDisplayName[awardsQuery.data.mostAccurate.uid] ?? awardsQuery.data.mostAccurate.uid} (${awardsQuery.data.mostAccurate.score})`
                 : 'N/A'}
             </p>
             <p>
               Risk taker:{' '}
               {awardsQuery.data.riskTaker
-                ? `${awardsQuery.data.riskTaker.uid} (volatility ${awardsQuery.data.riskTaker.volatility})`
+                ? `${uidToDisplayName[awardsQuery.data.riskTaker.uid] ?? awardsQuery.data.riskTaker.uid} (volatility ${awardsQuery.data.riskTaker.volatility})`
                 : 'N/A'}
             </p>
             <p>
