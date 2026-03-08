@@ -44,6 +44,7 @@ export type RaceDoc = {
   name: string
   raceStartAt?: string
   lockAt?: string
+  circuitTimezone?: string // IANA timezone, e.g. "Australia/Melbourne"
   status?: 'scheduled' | 'in_progress' | 'completed' | 'results_ingested'
 }
 
