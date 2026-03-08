@@ -52,8 +52,32 @@ type InitializeSeasonRequest = {
   firstRaceRound: number
   raceStartAt: string
   lockAt: string
+  circuitTimezone?: string
   seedDefaultRoster: boolean
 }
+
+const F1_CIRCUIT_TIMEZONES: { value: string; label: string }[] = [
+  { value: '', label: '— Select race timezone (optional) —' },
+  { value: 'Australia/Melbourne', label: 'Australia/Melbourne (Australian GP)' },
+  { value: 'Asia/Shanghai', label: 'Asia/Shanghai (Chinese GP)' },
+  { value: 'Asia/Bahrain', label: 'Asia/Bahrain (Bahrain GP)' },
+  { value: 'Asia/Dubai', label: 'Asia/Dubai (Abu Dhabi GP)' },
+  { value: 'Europe/Monaco', label: 'Europe/Monaco (Monaco GP)' },
+  { value: 'America/Montreal', label: 'America/Montreal (Canadian GP)' },
+  { value: 'Europe/London', label: 'Europe/London (British GP)' },
+  { value: 'Asia/Singapore', label: 'Asia/Singapore (Singapore GP)' },
+  { value: 'America/Sao_Paulo', label: 'America/Sao_Paulo (Brazilian GP)' },
+  { value: 'Asia/Tokyo', label: 'Asia/Tokyo (Japanese GP)' },
+  { value: 'America/Mexico_City', label: 'America/Mexico_City (Mexican GP)' },
+  { value: 'America/New_York', label: 'America/New_York (Miami GP)' },
+  { value: 'Europe/Madrid', label: 'Europe/Madrid (Spanish GP)' },
+  { value: 'Europe/Paris', label: 'Europe/Paris (French GP)' },
+  { value: 'Europe/Vienna', label: 'Europe/Vienna (Austrian GP)' },
+  { value: 'Europe/Budapest', label: 'Europe/Budapest (Hungarian GP)' },
+  { value: 'Europe/Amsterdam', label: 'Europe/Amsterdam (Dutch GP)' },
+  { value: 'Europe/Rome', label: 'Europe/Rome (Italian GP)' },
+  { value: 'America/Los_Angeles', label: 'America/Los_Angeles (Las Vegas GP)' },
+]
 
 type ConstructorOption = {
   id: string
@@ -91,6 +115,13 @@ type ScoringConfig = {
   seasonName: string
   scoringRules: ScoringRulesForm
   constructors: ConstructorOption[]
+}
+
+type AdminRaceOption = {
+  id: string
+  name: string
+  round: number
+  circuitTimezone?: string
 }
 
 type UpdateSeasonScoringRulesRequest = {
@@ -325,6 +356,21 @@ async function fetchScoringConfig(seasonId: string): Promise<ScoringConfig> {
   }
 }
 
+async function fetchRacesForAdmin(seasonId: string): Promise<AdminRaceOption[]> {
+  const racesSnap = await getDocs(query(collection(db, 'races'), where('seasonId', '==', seasonId)))
+  return racesSnap.docs
+    .map((doc) => {
+      const data = doc.data()
+      return {
+        id: doc.id,
+        name: (data.name as string | undefined) ?? doc.id,
+        round: Number(data.round ?? 0),
+        circuitTimezone: (data.circuitTimezone as string | undefined) || undefined,
+      }
+    })
+    .sort((a, b) => a.round - b.round)
+}
+
 async function fetchGroupAdminData(groupId: string): Promise<GroupAdminData> {
   const groupSnap = await getDoc(doc(db, 'groups', groupId))
   if (!groupSnap.exists()) throw new Error('Group not found.')
@@ -375,8 +421,11 @@ export function AdminPage() {
   const [firstRaceRound, setFirstRaceRound] = useState('1')
   const [raceStartAt, setRaceStartAt] = useState(toLocalInputValue(defaultStart))
   const [lockAt, setLockAt] = useState(toLocalInputValue(defaultStart))
+  const [circuitTimezone, setCircuitTimezone] = useState('')
   const [activateSeason, setActivateSeason] = useState(true)
   const [seedDefaultRoster, setSeedDefaultRoster] = useState(true)
+  const [raceTimezoneRaceId, setRaceTimezoneRaceId] = useState('')
+  const [raceTimezoneValue, setRaceTimezoneValue] = useState('')
   const [scoringRulesForm, setScoringRulesForm] = useState<ScoringRulesForm>(DEFAULT_SCORING_RULES)
   const [scoringNotice, setScoringNotice] = useState<string | null>(null)
   const [simulationResult, setSimulationResult] = useState<SimulateSeasonScoringResponse | null>(null)
@@ -396,6 +445,12 @@ export function AdminPage() {
   const scoringQuery = useQuery({
     queryKey: ['season-scoring', preseasonQuery.data?.selectedSeasonId],
     queryFn: () => fetchScoringConfig(preseasonQuery.data!.selectedSeasonId!),
+    enabled: Boolean(preseasonQuery.data?.selectedSeasonId),
+  })
+
+  const adminRacesQuery = useQuery({
+    queryKey: ['admin-races', preseasonQuery.data?.selectedSeasonId],
+    queryFn: () => fetchRacesForAdmin(preseasonQuery.data!.selectedSeasonId!),
     enabled: Boolean(preseasonQuery.data?.selectedSeasonId),
   })
 
@@ -461,6 +516,7 @@ export function AdminPage() {
         firstRaceRound: firstRaceRoundValue,
         raceStartAt: raceStartIso,
         lockAt: lockIso,
+        ...(circuitTimezone ? { circuitTimezone } : {}),
         seedDefaultRoster,
       })
 
@@ -483,6 +539,24 @@ export function AdminPage() {
     onError: (error) => {
       setSetupNotice(null)
       setActionError(error instanceof Error ? error.message : 'Failed to initialize season')
+    },
+  })
+
+  const updateRaceTimezoneMutation = useMutation({
+    mutationFn: async ({ raceId, circuitTimezone }: { raceId: string; circuitTimezone: string }) => {
+      const callable = httpsCallable<
+        { raceId: string; circuitTimezone: string },
+        { raceId: string; circuitTimezone: string | null }
+      >(functions, 'updateRaceCircuitTimezone')
+      await callable({ raceId, circuitTimezone })
+    },
+    onSuccess: async () => {
+      setActionError(null)
+      await queryClient.invalidateQueries({ queryKey: ['admin-races', preseasonQuery.data?.selectedSeasonId] })
+      await queryClient.invalidateQueries({ queryKey: ['picks-bootstrap'] })
+    },
+    onError: (error) => {
+      setActionError(error instanceof Error ? error.message : 'Failed to update race timezone')
     },
   })
 
@@ -804,6 +878,17 @@ export function AdminPage() {
               </label>
 
               <label>
+                Race timezone (for display)
+                <select value={circuitTimezone} onChange={(event) => setCircuitTimezone(event.target.value)}>
+                  {F1_CIRCUIT_TIMEZONES.map(({ value, label }) => (
+                    <option key={value || 'none'} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
                 Activate this season
                 <select
                   value={activateSeason ? 'yes' : 'no'}
@@ -830,6 +915,70 @@ export function AdminPage() {
               </button>
             </form>
             {setupNotice ? <p className="notice-text">{setupNotice}</p> : null}
+
+            <div className="admin-card">
+              <h3>Set race timezone</h3>
+              <p>Set the circuit timezone for a race so lock times display in the race&apos;s local time.</p>
+              {adminRacesQuery.isLoading ? <p>Loading races...</p> : null}
+              {adminRacesQuery.isError ? (
+                <p className="validation-error">{(adminRacesQuery.error as Error).message}</p>
+              ) : null}
+              {adminRacesQuery.data && adminRacesQuery.data.length > 0 ? (
+                <form
+                  className="auth-form preseason-form"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    if (!raceTimezoneRaceId) return
+                    updateRaceTimezoneMutation.mutate({
+                      raceId: raceTimezoneRaceId,
+                      circuitTimezone: raceTimezoneValue,
+                    })
+                  }}
+                >
+                  <label>
+                    Race
+                    <select
+                      value={raceTimezoneRaceId}
+                      onChange={(e) => {
+                        setRaceTimezoneRaceId(e.target.value)
+                        const race = adminRacesQuery.data?.find((r) => r.id === e.target.value)
+                        setRaceTimezoneValue(race?.circuitTimezone ?? '')
+                      }}
+                    >
+                      <option value="">— Select race —</option>
+                      {adminRacesQuery.data.map((race) => (
+                        <option key={race.id} value={race.id}>
+                          R{race.round} – {race.name}
+                          {race.circuitTimezone ? ` (${race.circuitTimezone})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Circuit timezone
+                    <select
+                      value={raceTimezoneValue}
+                      onChange={(e) => setRaceTimezoneValue(e.target.value)}
+                      disabled={!raceTimezoneRaceId}
+                    >
+                      {F1_CIRCUIT_TIMEZONES.map(({ value, label }) => (
+                        <option key={value || 'none'} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={!raceTimezoneRaceId || updateRaceTimezoneMutation.isPending}
+                  >
+                    {updateRaceTimezoneMutation.isPending ? 'Updating...' : 'Update race timezone'}
+                  </button>
+                </form>
+              ) : adminRacesQuery.data ? (
+                <p>No races in the selected season.</p>
+              ) : null}
+            </div>
           </div>
         ) : null}
 
@@ -1178,7 +1327,7 @@ export function AdminPage() {
               <ul className="admin-list">
                 {activeMembers.map((member) => {
                   const isOwner = member.role === 'owner'
-                  const canPromote = currentGroupRole === 'owner' && !isOwner
+                  const canPromote = (currentGroupRole === 'owner' || currentGroupRole === 'admin') && !isOwner
                   const roleLabel = member.uid === groupQuery.data.ownerUid ? 'owner' : member.role
 
                   return (

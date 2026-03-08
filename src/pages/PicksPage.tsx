@@ -183,6 +183,7 @@ async function fetchRacesForSeason(seasonId: string): Promise<RaceInfo[]> {
             ? data.lockAt.toDate().toISOString()
             : String(data.lockAt)
           : undefined,
+        circuitTimezone: (data.circuitTimezone as string | undefined) || undefined,
         status,
       } satisfies RaceInfo
     })
@@ -670,7 +671,14 @@ export function PicksPage() {
       </label>
       <p>
         Lock:{' '}
-        <strong>{lockInfo.effectiveLockAt ? lockInfo.effectiveLockAt.toLocaleString() : 'Not configured'}</strong>
+        <strong>
+          {lockInfo.effectiveLockAt
+            ? lockInfo.effectiveLockAt.toLocaleString(undefined, {
+                timeZone: data.race?.circuitTimezone ?? undefined,
+                timeZoneName: 'short',
+              })
+            : 'Not configured'}
+        </strong>
       </p>
       <p>
         Countdown: <strong>{countdownLabel}</strong>

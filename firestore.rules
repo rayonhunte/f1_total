@@ -120,7 +120,8 @@ service cloud.firestore {
             ])
           ) ||
           (
-            isGroupOwner(groupId) &&
+            isGroupAdmin(groupId) &&
+            resource.data.uid != get(/databases/$(database)/documents/groups/$(groupId)).data.ownerUid &&
             resource.data.status == 'active' &&
             request.resource.data.uid == resource.data.uid &&
             request.resource.data.displayName == resource.data.displayName &&

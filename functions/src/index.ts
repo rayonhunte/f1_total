@@ -45,12 +45,18 @@ type InitializeSeasonRequest = {
   firstRaceRound?: number
   raceStartAt?: string
   lockAt?: string
+  circuitTimezone?: string
   seedDefaultRoster?: boolean
 }
 
 type LiveRosterRequest = {
   seasonId?: string
   seasonYear?: number
+}
+
+type UpdateRaceCircuitTimezoneRequest = {
+  raceId: string
+  circuitTimezone: string
 }
 
 type UpdateSeasonScoringRulesRequest = {
@@ -1119,6 +1125,7 @@ export const initializeSeasonBootstrap = onCall(
 
     const raceStart = parseRequiredIsoDate(data.raceStartAt, 'raceStartAt')
     const lockAt = data.lockAt?.trim() ? parseRequiredIsoDate(data.lockAt, 'lockAt') : raceStart
+    const circuitTimezone = data.circuitTimezone?.trim() || undefined
     const seedDefaultRoster = data.seedDefaultRoster !== false
 
     const seasonRef = db.collection('seasons').doc(seasonId)
@@ -1173,6 +1180,7 @@ export const initializeSeasonBootstrap = onCall(
         name: firstRaceName,
         raceStartAt: Timestamp.fromDate(raceStart),
         lockAt: Timestamp.fromDate(lockAt),
+        ...(circuitTimezone ? { circuitTimezone } : {}),
         status: 'scheduled',
         updatedAt: FieldValue.serverTimestamp(),
         createdAt: FieldValue.serverTimestamp(),
@@ -1190,6 +1198,44 @@ export const initializeSeasonBootstrap = onCall(
       seasonCreated: !seasonSnapshot.exists,
       rosterSeeded: seedResult,
     }
+  },
+)
+
+export const updateRaceCircuitTimezone = onCall(
+  {
+    region: 'us-central1',
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication is required.')
+    }
+    if (request.auth.token.role !== 'admin') {
+      throw new HttpsError('permission-denied', 'Admin role is required.')
+    }
+
+    const data = (request.data ?? {}) as UpdateRaceCircuitTimezoneRequest
+    const raceId = data.raceId?.trim()
+    const circuitTimezone = data.circuitTimezone?.trim()
+
+    if (!raceId) {
+      throw new HttpsError('invalid-argument', 'raceId is required.')
+    }
+
+    const raceRef = db.collection('races').doc(raceId)
+    const raceSnap = await raceRef.get()
+    if (!raceSnap.exists) {
+      throw new HttpsError('not-found', `Race ${raceId} not found.`)
+    }
+
+    await raceRef.set(
+      {
+        circuitTimezone: circuitTimezone || null,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    )
+
+    return { raceId, circuitTimezone: circuitTimezone || null }
   },
 )
 
