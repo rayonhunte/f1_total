@@ -33,6 +33,11 @@ type PreseasonStatus = {
   constructorsCount: number
 }
 
+type LiveRosterCounts = {
+  driversCount: number
+  constructorsCount: number
+}
+
 type InitializeSeasonResponse = {
   seasonId: string
   raceId: string
@@ -284,6 +289,17 @@ async function fetchPreseasonStatus(): Promise<PreseasonStatus> {
   }
 }
 
+async function fetchLiveRosterCounts(): Promise<LiveRosterCounts> {
+  const [driversSnap, constructorsSnap] = await Promise.all([
+    getDocs(collection(db, 'drivers')),
+    getDocs(collection(db, 'constructors')),
+  ])
+  return {
+    driversCount: driversSnap.size,
+    constructorsCount: constructorsSnap.size,
+  }
+}
+
 async function fetchScoringConfig(seasonId: string): Promise<ScoringConfig> {
   const [seasonSnap, constructorsSnap] = await Promise.all([
     getDoc(doc(db, 'seasons', seasonId)),
@@ -464,6 +480,7 @@ export function AdminPage() {
   const [scoringNotice, setScoringNotice] = useState<string | null>(null)
   const [groupSyncNotice, setGroupSyncNotice] = useState<string | null>(null)
   const [raceSyncNotice, setRaceSyncNotice] = useState<string | null>(null)
+  const [countdownNow, setCountdownNow] = useState(() => Date.now())
 
   const groupQuery = useQuery({
     queryKey: ['group-admin', activeGroupId],
@@ -474,6 +491,11 @@ export function AdminPage() {
   const preseasonQuery = useQuery({
     queryKey: ['preseason-status'],
     queryFn: fetchPreseasonStatus,
+  })
+
+  const liveRosterQuery = useQuery({
+    queryKey: ['live-roster-counts'],
+    queryFn: fetchLiveRosterCounts,
   })
 
   const scoringQuery = useQuery({

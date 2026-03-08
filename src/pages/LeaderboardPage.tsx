@@ -177,6 +177,10 @@ export function LeaderboardPage() {
     () => entries.filter((entry) => entry.uid !== user?.uid),
     [entries, user?.uid],
   )
+  const uidToDisplayName = useMemo(
+    () => Object.fromEntries(entries.map((e) => [e.uid, e.displayName])),
+    [entries],
+  )
 
   if (leaderboardQuery.isLoading) {
     return (
