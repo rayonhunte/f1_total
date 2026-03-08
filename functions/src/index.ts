@@ -868,7 +868,12 @@ async function recomputeRaceScores(seasonId: string, raceId: string, result: Rac
   return picksSnapshot.size
 }
 
-async function runRaceSync(input: SyncRequest): Promise<{ seasonId: string; raceId: string; scoredPicks: number }> {
+async function runRaceSync(input: SyncRequest): Promise<{
+  seasonId: string
+  raceId: string
+  scoredPicks: number
+  alreadySynced?: boolean
+}> {
   const seasonId = input.seasonId ?? (await findActiveSeasonId())
   await syncRaceStatusesForSeason(seasonId)
   const raceSelection = await pickRaceForSync(seasonId, input.raceId)
@@ -878,6 +883,19 @@ async function runRaceSync(input: SyncRequest): Promise<{ seasonId: string; race
   }
 
   const { raceId, race } = raceSelection
+  const resultSnap = await db.collection('results').doc(raceId).get()
+  if (resultSnap.exists) {
+    await db.collection('races').doc(raceId).set(
+      {
+        status: 'completed',
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    )
+    logger.info('Race already synced, skipped re-ingest', { seasonId, raceId })
+    return { seasonId, raceId, scoredPicks: 0, alreadySynced: true }
+  }
+
   const result = await ingestRaceResults(seasonId, raceId, race)
   const scoredPicks = await recomputeRaceScores(seasonId, raceId, result)
 
