@@ -38,7 +38,6 @@ type RaceInfo = {
   round: number
   raceStartAt?: string
   lockAt?: string
-  circuitTimezone?: string
   status?: 'scheduled' | 'in_progress' | 'completed' | 'results_ingested'
 }
 
