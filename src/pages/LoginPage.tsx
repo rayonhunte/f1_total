@@ -14,14 +14,12 @@ const highlights = [
 ]
 
 export function LoginPage() {
-  const { user, loading, activeGroupId, groups } = useAuth()
+  const { user, loading } = useAuth()
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const hasActiveMembership = groups.some((group) => group.status === 'active')
-
   if (!loading && user) {
-    return <Navigate to={activeGroupId || hasActiveMembership ? '/app' : '/groups'} replace />
+    return <Navigate to="/groups" replace />
   }
 
   const onGoogleSignIn = async () => {
