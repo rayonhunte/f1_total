@@ -229,6 +229,26 @@ async function assertSeasonSetupAccess(uid: string, isAdmin: boolean): Promise<v
   }
 }
 
+async function assertSeasonScheduleImportAccess(uid: string, isAdmin: boolean): Promise<void> {
+  if (isAdmin) return
+
+  const ownedGroupsSnapshot = await db.collection('groups').where('ownerUid', '==', uid).limit(1).get()
+  if (!ownedGroupsSnapshot.empty) return
+
+  const membershipSnapshot = await db.collectionGroup('members').where('uid', '==', uid).where('status', '==', 'active').get()
+  const isGroupAdmin = membershipSnapshot.docs.some((doc) => {
+    const role = String(doc.data().role ?? 'member')
+    return role === 'owner' || role === 'admin'
+  })
+
+  if (!isGroupAdmin) {
+    throw new HttpsError(
+      'permission-denied',
+      'Only group owners/admins or platform admins can import season schedules.',
+    )
+  }
+}
+
 function resolveRaceStatusForImport(raceStartAt: Date | null, hasResults: boolean): RaceDoc['status'] {
   if (hasResults) return 'completed'
   if (raceStartAt && raceStartAt <= new Date()) return 'in_progress'
@@ -1268,7 +1288,7 @@ export const importSeasonSchedule = onCall(
 
     const uid = request.auth.uid
     const isAdmin = request.auth.token.role === 'admin'
-    await assertSeasonSetupAccess(uid, isAdmin)
+    await assertSeasonScheduleImportAccess(uid, isAdmin)
 
     const data = (request.data ?? {}) as ImportSeasonScheduleRequest
     const requestedSeasonId = data.seasonId?.trim()
