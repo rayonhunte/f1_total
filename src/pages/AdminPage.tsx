@@ -44,6 +44,15 @@ type InitializeSeasonResponse = {
   }
 }
 
+type ImportSeasonScheduleResponse = {
+  seasonId: string
+  seasonYear: number
+  totalFromApi: number
+  created: number
+  updated: number
+  skippedCompleted: number
+}
+
 type InitializeSeasonRequest = {
   seasonId: string
   seasonName: string
@@ -472,6 +481,7 @@ export function AdminPage() {
   const [raceTimezoneRaceId, setRaceTimezoneRaceId] = useState('')
   const [raceTimezoneValue, setRaceTimezoneValue] = useState('')
   const [scoringRulesForm, setScoringRulesForm] = useState<ScoringRulesForm>(DEFAULT_SCORING_RULES)
+  const [scheduleImportNotice, setScheduleImportNotice] = useState<string | null>(null)
   const [scoringNotice, setScoringNotice] = useState<string | null>(null)
   const [groupSyncNotice, setGroupSyncNotice] = useState<string | null>(null)
   const [raceSyncNotice, setRaceSyncNotice] = useState<string | null>(null)
@@ -620,6 +630,46 @@ export function AdminPage() {
     },
     onError: (error) => {
       setActionError(error instanceof Error ? error.message : 'Failed to update race timezone')
+    },
+  })
+
+  const scheduleImportMutation = useMutation({
+    mutationFn: async () => {
+      const selectedSeasonId = preseasonQuery.data?.selectedSeasonId
+      const selectedSeasonYear = preseasonQuery.data?.selectedSeasonYear
+
+      if (!selectedSeasonId || !selectedSeasonYear) {
+        throw new Error('No season selected to import.')
+      }
+
+      const callable = httpsCallable<
+        { seasonId: string; seasonYear: number },
+        ImportSeasonScheduleResponse
+      >(functions, 'importSeasonSchedule')
+
+      const response = await callable({
+        seasonId: selectedSeasonId,
+        seasonYear: selectedSeasonYear,
+      })
+
+      return response.data
+    },
+    onSuccess: async (result) => {
+      setActionError(null)
+      setScheduleImportNotice(
+        `Imported ${result.totalFromApi} API races for ${result.seasonId}. ` +
+          `Created: ${result.created}. Updated: ${result.updated}. Completed preserved: ${result.skippedCompleted}.`,
+      )
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['preseason-status'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin-races', result.seasonId] }),
+        queryClient.invalidateQueries({ queryKey: ['picks-bootstrap'] }),
+        queryClient.invalidateQueries({ queryKey: ['dashboard-current-pick'] }),
+      ])
+    },
+    onError: (error) => {
+      setScheduleImportNotice(null)
+      setActionError(error instanceof Error ? error.message : 'Failed to import season schedule.')
     },
   })
 
@@ -886,6 +936,7 @@ export function AdminPage() {
                 event.preventDefault()
                 setActionError(null)
                 setSetupNotice(null)
+                setScheduleImportNotice(null)
                 preseasonMutation.mutate()
               }}
             >
@@ -1013,6 +1064,24 @@ export function AdminPage() {
               </button>
             </form>
             {setupNotice ? <p className="notice-text">{setupNotice}</p> : null}
+            <div className="admin-card">
+              <h3>Import season schedule</h3>
+              <p>Pull all scheduled races for the selected season from Jolpi and upsert missing race docs.</p>
+              <p>Completed races are preserved and will not be reset.</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setActionError(null)
+                  setSetupNotice(null)
+                  setScheduleImportNotice(null)
+                  scheduleImportMutation.mutate()
+                }}
+                disabled={scheduleImportMutation.isPending || !preseasonQuery.data?.selectedSeasonId}
+              >
+                {scheduleImportMutation.isPending ? 'Importing schedule...' : 'Import Season Schedule'}
+              </button>
+              {scheduleImportNotice ? <p className="notice-text">{scheduleImportNotice}</p> : null}
+            </div>
 
             <div className="admin-card">
               <h3>Set race timezone</h3>

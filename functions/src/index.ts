@@ -7,6 +7,7 @@ import {
   fetchConstructorStandings,
   fetchDriverStandings,
   fetchRaceResults,
+  fetchSeasonSchedule,
   fetchSeasonConstructors,
   fetchSeasonDrivers,
   isDnfStatus,
@@ -47,6 +48,20 @@ type InitializeSeasonRequest = {
   lockAt?: string
   circuitTimezone?: string
   seedDefaultRoster?: boolean
+}
+
+type ImportSeasonScheduleRequest = {
+  seasonId?: string
+  seasonYear?: number
+}
+
+type ImportSeasonScheduleResponse = {
+  seasonId: string
+  seasonYear: number
+  totalFromApi: number
+  created: number
+  updated: number
+  skippedCompleted: number
 }
 
 type LiveRosterRequest = {
@@ -203,6 +218,21 @@ function parseNonNegativeNumber(value: unknown, fieldLabel: string): number {
     throw new HttpsError('invalid-argument', `${fieldLabel} must be a non-negative number.`)
   }
   return parsed
+}
+
+async function assertSeasonSetupAccess(uid: string, isAdmin: boolean): Promise<void> {
+  if (isAdmin) return
+
+  const ownedGroupsSnapshot = await db.collection('groups').where('ownerUid', '==', uid).limit(1).get()
+  if (ownedGroupsSnapshot.empty) {
+    throw new HttpsError('permission-denied', 'Only group owners or platform admins can initialize seasons.')
+  }
+}
+
+function resolveRaceStatusForImport(raceStartAt: Date | null, hasResults: boolean): RaceDoc['status'] {
+  if (hasResults) return 'completed'
+  if (raceStartAt && raceStartAt <= new Date()) return 'in_progress'
+  return 'scheduled'
 }
 
 function parseScoringRulesInput(raw: unknown): ScoringRules {
@@ -1131,13 +1161,7 @@ export const initializeSeasonBootstrap = onCall(
 
     const uid = request.auth.uid
     const isAdmin = request.auth.token.role === 'admin'
-
-    if (!isAdmin) {
-      const ownedGroupsSnapshot = await db.collection('groups').where('ownerUid', '==', uid).limit(1).get()
-      if (ownedGroupsSnapshot.empty) {
-        throw new HttpsError('permission-denied', 'Only group owners or platform admins can initialize seasons.')
-      }
-    }
+    await assertSeasonSetupAccess(uid, isAdmin)
 
     const data = (request.data ?? {}) as InitializeSeasonRequest
     const seasonYear = Number(data.seasonYear ?? new Date().getUTCFullYear())
@@ -1229,6 +1253,132 @@ export const initializeSeasonBootstrap = onCall(
       activated: activateSeason,
       seasonCreated: !seasonSnapshot.exists,
       rosterSeeded: seedResult,
+    }
+  },
+)
+
+export const importSeasonSchedule = onCall(
+  {
+    region: 'us-central1',
+  },
+  async (request): Promise<ImportSeasonScheduleResponse> => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication is required.')
+    }
+
+    const uid = request.auth.uid
+    const isAdmin = request.auth.token.role === 'admin'
+    await assertSeasonSetupAccess(uid, isAdmin)
+
+    const data = (request.data ?? {}) as ImportSeasonScheduleRequest
+    const requestedSeasonId = data.seasonId?.trim()
+    if (!requestedSeasonId) {
+      throw new HttpsError('invalid-argument', 'seasonId is required.')
+    }
+
+    const seasonRef = db.collection('seasons').doc(requestedSeasonId)
+    const seasonSnap = await seasonRef.get()
+    if (!seasonSnap.exists) {
+      throw new HttpsError('not-found', `Season ${requestedSeasonId} not found.`)
+    }
+
+    const seasonData = seasonSnap.data() as Partial<SeasonDoc>
+    const storedSeasonYear = Number(seasonData.year ?? 0)
+    const requestedSeasonYear = Number(data.seasonYear ?? storedSeasonYear)
+    if (!Number.isInteger(requestedSeasonYear) || requestedSeasonYear < 1950 || requestedSeasonYear > 2100) {
+      throw new HttpsError('invalid-argument', 'seasonYear must be between 1950 and 2100.')
+    }
+    if (storedSeasonYear > 0 && storedSeasonYear !== requestedSeasonYear) {
+      throw new HttpsError(
+        'invalid-argument',
+        `Season ${requestedSeasonId} year mismatch. Expected ${storedSeasonYear}, received ${requestedSeasonYear}.`,
+      )
+    }
+
+    const schedule = await fetchSeasonSchedule(requestedSeasonYear)
+    if (schedule.length === 0) {
+      throw new HttpsError('not-found', `No races returned from Jolpi for season ${requestedSeasonYear}.`)
+    }
+
+    const existingRacesSnap = await db.collection('races').where('seasonId', '==', requestedSeasonId).get()
+    const existingRaces = new Map(existingRacesSnap.docs.map((doc) => [doc.id, doc]))
+    const resultRefs = schedule.map((race) => db.collection('results').doc(`${requestedSeasonId}_r${race.round}`).get())
+    const resultSnaps = await Promise.all(resultRefs)
+    const resultByRaceId = new Map(resultSnaps.map((snap) => [snap.id, snap.exists]))
+
+    let created = 0
+    let updated = 0
+    let skippedCompleted = 0
+
+    const writes = schedule.map(async (scheduledRace) => {
+      const raceId = `${requestedSeasonId}_r${scheduledRace.round}`
+      const raceRef = db.collection('races').doc(raceId)
+      const existingRaceSnap = existingRaces.get(raceId)
+      const existingRace = existingRaceSnap?.data() as Partial<RaceDoc> | undefined
+      const hasResults = resultByRaceId.get(raceId) === true
+      const raceStart = scheduledRace.raceStartAt ? new Date(scheduledRace.raceStartAt) : null
+      const validRaceStart = raceStart && !Number.isNaN(raceStart.getTime()) ? raceStart : null
+      const importedStatus = resolveRaceStatusForImport(validRaceStart, hasResults)
+
+      const basePayload = {
+        seasonId: requestedSeasonId,
+        seasonYear: requestedSeasonYear,
+        round: scheduledRace.round,
+        name: scheduledRace.raceName,
+        ...(validRaceStart ? { raceStartAt: Timestamp.fromDate(validRaceStart), lockAt: Timestamp.fromDate(validRaceStart) } : {}),
+        updatedAt: FieldValue.serverTimestamp(),
+      }
+
+      if (!existingRaceSnap) {
+        created += 1
+        await raceRef.set({
+          ...basePayload,
+          status: importedStatus,
+          createdAt: FieldValue.serverTimestamp(),
+        })
+        return
+      }
+
+      if (hasResults) {
+        skippedCompleted += 1
+        await raceRef.set(
+          {
+            seasonId: requestedSeasonId,
+            seasonYear: requestedSeasonYear,
+            round: scheduledRace.round,
+            name: scheduledRace.raceName,
+            status: 'completed',
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        )
+        return
+      }
+
+      const nextStatus =
+        existingRace?.status === 'completed' || existingRace?.status === 'results_ingested'
+          ? existingRace.status
+          : importedStatus
+
+      updated += 1
+      await raceRef.set(
+        {
+          ...basePayload,
+          status: nextStatus,
+        },
+        { merge: true },
+      )
+    })
+
+    await Promise.all(writes)
+
+    return {
+      seasonId: requestedSeasonId,
+      seasonYear: requestedSeasonYear,
+      totalFromApi: schedule.length,
+      created,
+      updated,
+      skippedCompleted,
     }
   },
 )
