@@ -134,6 +134,23 @@ function computeRaceLockInfo(race: RaceInfo, now: Date) {
   }
 }
 
+function isRaceCompleted(race: RaceInfo): boolean {
+  return race.status === 'completed' || race.status === 'results_ingested'
+}
+
+function getDefaultRace(races: RaceInfo[], now: Date): RaceInfo {
+  const nextUnlockedRace = races.find((race) => {
+    if (isRaceCompleted(race)) return false
+    return !computeRaceLockInfo(race, now).isLocked
+  })
+  if (nextUnlockedRace) return nextUnlockedRace
+
+  const nextIncompleteRace = races.find((race) => !isRaceCompleted(race))
+  if (nextIncompleteRace) return nextIncompleteRace
+
+  return races[races.length - 1]
+}
+
 function formatCountdown(lockAt: Date | null, nowMs: number): string {
   if (!lockAt) return 'No lock configured'
   const diff = lockAt.getTime() - nowMs
@@ -249,8 +266,7 @@ async function fetchPicksBootstrap(uid: string, groupId: string, selectedRaceId?
   const races = await fetchRacesForSeason(seasonId)
   const now = new Date()
   const preferredRace = selectedRaceId ? races.find((race) => race.id === selectedRaceId) : undefined
-  const nextOpenRace = races.find((race) => !computeRaceLockInfo(race, now).isLocked)
-  const race = preferredRace ?? nextOpenRace ?? races[races.length - 1]
+  const race = preferredRace ?? getDefaultRace(races, now)
 
   let drivers: DriverOption[] = []
   let constructors: ConstructorOption[] = []
@@ -385,8 +401,7 @@ export function PicksPage() {
   const focusRaceId = useMemo(() => {
     const data = bootstrapQuery.data
     if (!data) return ''
-    const openRace = data.races.find((race) => !computeRaceLockInfo(race, new Date(nowMs)).isLocked)
-    return selectedRaceId || openRace?.id || data.race.id
+    return selectedRaceId || getDefaultRace(data.races, new Date(nowMs)).id || data.race.id
   }, [bootstrapQuery.data, selectedRaceId, nowMs])
 
   const countdownLabel = useMemo(() => formatCountdown(lockInfo.effectiveLockAt, nowMs), [lockInfo.effectiveLockAt, nowMs])

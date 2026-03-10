@@ -20,8 +20,20 @@ type RaceResultEntry = {
 type RaceTable = {
   RaceTable: {
     Races: Array<{
+      season?: string
+      round?: string
       raceName: string
-      Results: RaceResultEntry[]
+      date?: string
+      time?: string
+      Circuit?: {
+        circuitId?: string
+        circuitName?: string
+        Location?: {
+          locality?: string
+          country?: string
+        }
+      }
+      Results?: RaceResultEntry[]
     }>
   }
 }
@@ -91,6 +103,17 @@ export type LiveConstructor = {
   name: string
 }
 
+export type SeasonRaceSchedule = {
+  seasonYear: number
+  round: number
+  raceName: string
+  raceStartAt?: string
+  circuitId?: string
+  circuitName?: string
+  locality?: string
+  country?: string
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url)
 
@@ -105,6 +128,32 @@ export async function fetchRaceResults(seasonYear: number, round: number) {
   const url = `${JOLPI_BASE}/${seasonYear}/${round}/results.json`
   const payload = await fetchJson<JolpiResponse<RaceTable>>(url)
   return payload.MRData.RaceTable.Races[0]
+}
+
+export async function fetchSeasonSchedule(seasonYear: number): Promise<SeasonRaceSchedule[]> {
+  const url = `${JOLPI_BASE}/${seasonYear}.json`
+  const payload = await fetchJson<JolpiResponse<RaceTable>>(url)
+
+  return (payload.MRData.RaceTable.Races ?? [])
+    .map((race) => {
+      const round = Number(race.round ?? 0)
+      const date = typeof race.date === 'string' ? race.date.trim() : ''
+      const time = typeof race.time === 'string' ? race.time.trim() : ''
+      const raceStartAt = date ? `${date}T${time || '00:00:00Z'}` : undefined
+
+      return {
+        seasonYear,
+        round,
+        raceName: race.raceName,
+        raceStartAt,
+        circuitId: race.Circuit?.circuitId,
+        circuitName: race.Circuit?.circuitName,
+        locality: race.Circuit?.Location?.locality,
+        country: race.Circuit?.Location?.country,
+      } satisfies SeasonRaceSchedule
+    })
+    .filter((race) => Number.isInteger(race.round) && race.round > 0 && Boolean(race.raceName))
+    .sort((a, b) => a.round - b.round)
 }
 
 export async function fetchDriverStandings(seasonYear: number, round: number) {
