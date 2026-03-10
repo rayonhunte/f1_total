@@ -79,5 +79,8 @@ jobs:
       - name: Setup Firebase CLI
         run: npm install -g firebase-tools
 
-      - name: Deploy Firebase
+      - name: Ensure Firestore rules file exists
+        run: test -f firestore.rules || (echo "firestore.rules not found" && exit 1)
+
+      - name: Deploy Firebase (Firestore rules, Functions, Hosting)
         run: firebase deploy --project "$FIREBASE_PROJECT_ID" --non-interactive --only firestore:rules,functions,hosting

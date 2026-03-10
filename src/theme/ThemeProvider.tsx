@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ThemeContext, type ThemeMode } from './ThemeContext'
+import { ThemeContext } from './ThemeContext'
+import { VALID_THEME_IDS, type TeamThemeId } from './teamThemes'
 
 const STORAGE_KEY = 'f1_total_theme_mode'
 
-function getInitialMode(): ThemeMode {
-  if (typeof window === 'undefined') return 'light'
+function getInitialMode(): TeamThemeId {
+  if (typeof window === 'undefined') return 'dark'
 
   const saved = window.localStorage.getItem(STORAGE_KEY)
-  if (saved === 'light' || saved === 'dark') return saved
+  if (saved && VALID_THEME_IDS.has(saved)) return saved as TeamThemeId
 
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  return 'dark'
 }
 
 type ThemeProviderProps = {
@@ -17,7 +18,7 @@ type ThemeProviderProps = {
 }
 
 export function ThemeProvider({ children }: ThemeProviderProps) {
-  const [mode, setMode] = useState<ThemeMode>(() => getInitialMode())
+  const [mode, setModeState] = useState<TeamThemeId>(() => getInitialMode())
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', mode)
@@ -27,7 +28,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   const value = useMemo(
     () => ({
       mode,
-      toggleMode: () => setMode((current) => (current === 'light' ? 'dark' : 'light')),
+      setMode: (next: TeamThemeId) => setModeState(next),
     }),
     [mode],
   )

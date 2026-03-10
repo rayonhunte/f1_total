@@ -210,7 +210,7 @@ export function DashboardPage() {
                 type="button"
                 onClick={() =>
                   void saveNotificationPreferences({
-                    emailEnabled: !Boolean(notificationPrefsQuery.data?.emailEnabled),
+                    emailEnabled: !notificationPrefsQuery.data?.emailEnabled,
                     pushEnabled: Boolean(notificationPrefsQuery.data?.pushEnabled),
                     lockReminderMinutesBefore: Number(notificationPrefsQuery.data?.lockReminderMinutesBefore ?? 60),
                   })
@@ -226,7 +226,7 @@ export function DashboardPage() {
                 onClick={() =>
                   void saveNotificationPreferences({
                     emailEnabled: Boolean(notificationPrefsQuery.data?.emailEnabled),
-                    pushEnabled: !Boolean(notificationPrefsQuery.data?.pushEnabled),
+                    pushEnabled: !notificationPrefsQuery.data?.pushEnabled,
                     lockReminderMinutesBefore: Number(notificationPrefsQuery.data?.lockReminderMinutesBefore ?? 60),
                   })
                 }

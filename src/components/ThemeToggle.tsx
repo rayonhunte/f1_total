@@ -1,11 +1,21 @@
+import { TEAM_THEMES, type TeamThemeId } from '../theme/teamThemes'
 import { useTheme } from '../theme/useTheme'
 
 export function ThemeToggle() {
-  const { mode, toggleMode } = useTheme()
+  const { mode, setMode } = useTheme()
 
   return (
-    <button type="button" className="theme-toggle" onClick={toggleMode} aria-label="Toggle light and dark mode">
-      {mode === 'light' ? 'Dark Mode' : 'Light Mode'}
-    </button>
+    <select
+      className="theme-toggle"
+      value={mode}
+      onChange={(e) => setMode(e.target.value as TeamThemeId)}
+      aria-label="Select team theme"
+    >
+      {TEAM_THEMES.map((t) => (
+        <option key={t.id} value={t.id}>
+          {t.label}
+        </option>
+      ))}
+    </select>
   )
 }

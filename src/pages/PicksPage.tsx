@@ -38,7 +38,8 @@ type RaceInfo = {
   round: number
   raceStartAt?: string
   lockAt?: string
-  status?: 'scheduled' | 'in_progress' | 'completed'
+  circuitTimezone?: string
+  status?: 'scheduled' | 'in_progress' | 'completed' | 'results_ingested'
 }
 
 type LiveRosterRequest = {
@@ -116,12 +117,12 @@ function computeRaceLockInfo(race: RaceInfo, now: Date) {
   const raceStart = toDate(race.raceStartAt)
   const effectiveLockAt = lockAt ?? raceStart
   const status = race.status ?? 'scheduled'
-  const isStatusLocked = status === 'in_progress' || status === 'completed'
+  const isStatusLocked = status === 'in_progress' || status === 'completed' || status === 'results_ingested'
   const isTimeLocked = effectiveLockAt ? effectiveLockAt <= now : false
   const isLocked = isStatusLocked || isTimeLocked
 
   let stateLabel = 'Open'
-  if (status === 'completed') stateLabel = 'Completed'
+  if (status === 'completed' || status === 'results_ingested') stateLabel = 'Completed'
   else if (status === 'in_progress') stateLabel = 'In Progress (Locked)'
   else if (isLocked) stateLabel = 'Locked'
 
@@ -163,7 +164,9 @@ async function fetchRacesForSeason(seasonId: string): Promise<RaceInfo[]> {
       const data = raceDoc.data()
       const rawStatus = (data.status as string | undefined) ?? 'scheduled'
       const status: RaceInfo['status'] =
-        rawStatus === 'completed' || rawStatus === 'in_progress' ? rawStatus : 'scheduled'
+        rawStatus === 'completed' || rawStatus === 'in_progress' || rawStatus === 'results_ingested'
+          ? rawStatus
+          : 'scheduled'
 
       return {
         id: raceDoc.id,
@@ -181,6 +184,7 @@ async function fetchRacesForSeason(seasonId: string): Promise<RaceInfo[]> {
             ? data.lockAt.toDate().toISOString()
             : String(data.lockAt)
           : undefined,
+        circuitTimezone: (data.circuitTimezone as string | undefined) || undefined,
         status,
       } satisfies RaceInfo
     })
@@ -343,33 +347,31 @@ export function PicksPage() {
   })
 
   useEffect(() => {
-    const currentRaceId = bootstrapQuery.data?.race.id
+    const currentRaceId = bootstrapQuery.data?.race?.id
     if (!currentRaceId) return
     if (selectedRaceId !== currentRaceId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync selected race when bootstrap race changes
       setSelectedRaceId(currentRaceId)
     }
-  }, [bootstrapQuery.data?.race.id, selectedRaceId])
+  }, [bootstrapQuery.data?.race?.id, selectedRaceId])
 
+  const existingPodium = bootstrapQuery.data?.existingPick?.podium
+  const existingCaptain = bootstrapQuery.data?.existingPick?.captainDriverId
+  const existingWildcard = bootstrapQuery.data?.existingPick?.wildcard
   useEffect(() => {
-    const existingPodium = bootstrapQuery.data?.existingPick?.podium
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync form from server when existing pick loads
     setPodiumSelections({
       p1: existingPodium?.p1 ?? '',
       p2: existingPodium?.p2 ?? '',
       p3: existingPodium?.p3 ?? '',
     })
-    setCaptainDriverId(bootstrapQuery.data?.existingPick?.captainDriverId ?? '')
-    setWildcardEnabled(bootstrapQuery.data?.existingPick?.wildcard === true)
-  }, [
-    bootstrapQuery.data?.race.id,
-    bootstrapQuery.data?.existingPick?.podium.p1,
-    bootstrapQuery.data?.existingPick?.podium.p2,
-    bootstrapQuery.data?.existingPick?.podium.p3,
-    bootstrapQuery.data?.existingPick?.captainDriverId,
-    bootstrapQuery.data?.existingPick?.wildcard,
-  ])
+    setCaptainDriverId(existingCaptain ?? '')
+    setWildcardEnabled(existingWildcard === true)
+  }, [existingPodium?.p1, existingPodium?.p2, existingPodium?.p3, existingCaptain, existingWildcard])
 
   const lockInfo = useMemo(() => {
-    if (!bootstrapQuery.data?.race) {
+    const race = bootstrapQuery.data?.race
+    if (!race) {
       return {
         effectiveLockAt: null as Date | null,
         isLocked: false,
@@ -377,8 +379,8 @@ export function PicksPage() {
         stateLabel: 'Open',
       }
     }
-    return computeRaceLockInfo(bootstrapQuery.data.race, new Date(nowMs))
-  }, [bootstrapQuery.data?.race, nowMs])
+    return computeRaceLockInfo(race, new Date(nowMs))
+  }, [bootstrapQuery.data, nowMs])
 
   const focusRaceId = useMemo(() => {
     const data = bootstrapQuery.data
@@ -668,7 +670,14 @@ export function PicksPage() {
       </label>
       <p>
         Lock:{' '}
-        <strong>{lockInfo.effectiveLockAt ? lockInfo.effectiveLockAt.toLocaleString() : 'Not configured'}</strong>
+        <strong>
+          {lockInfo.effectiveLockAt
+            ? lockInfo.effectiveLockAt.toLocaleString(undefined, {
+                timeZone: data.race?.circuitTimezone ?? undefined,
+                timeZoneName: 'short',
+              })
+            : 'Not configured'}
+        </strong>
       </p>
       <p>
         Countdown: <strong>{countdownLabel}</strong>

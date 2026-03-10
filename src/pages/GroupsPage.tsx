@@ -13,7 +13,7 @@ function normalizeGroupName(name: string) {
 }
 
 export function GroupsPage() {
-  const { activeGroupId, groups, createGroup, joinGroupByCode, switchGroup } = useAuth()
+  const { groups, createGroup, joinGroupByCode, switchGroup } = useAuth()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [groupName, setGroupName] = useState('')
@@ -66,29 +66,14 @@ export function GroupsPage() {
   const activeMemberships = groups.filter((group) => group.status === 'active')
   const pendingMemberships = groups.filter((group) => group.status === 'pending')
 
-  useEffect(() => {
-    if (activeMemberships.length === 0) return
-
-    const hasSelectedActiveGroup = activeGroupId
-      ? activeMemberships.some((group) => group.id === activeGroupId)
-      : false
-
-    if (hasSelectedActiveGroup) {
+  const handleGoToGroup = async (groupId: string) => {
+    try {
+      await switchGroup(groupId)
       navigate('/app', { replace: true })
-      return
+    } catch (err) {
+      console.warn('Switch group failed', err)
     }
-
-    const fallbackGroupId = activeMemberships[0].id
-    void (async () => {
-      try {
-        await switchGroup(fallbackGroupId)
-      } catch (error) {
-        console.warn('Auto-select active group failed', error)
-      } finally {
-        navigate('/app', { replace: true })
-      }
-    })()
-  }, [activeGroupId, activeMemberships, navigate, switchGroup])
+  }
 
   const handleCreateGroup = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -160,14 +145,14 @@ export function GroupsPage() {
                 <li key={group.id}>
                   <div>
                     <strong>{group.name}</strong>
-                    <p>Role: {group.role}</p>
+                    <p>{group.role === 'owner' ? 'Your group' : group.role === 'admin' ? 'Admin' : 'Member'}</p>
                   </div>
                   <button
                     type="button"
-                    onClick={() => switchGroup(group.id)}
-                    disabled={saving || group.id === activeGroupId}
+                    onClick={() => handleGoToGroup(group.id)}
+                    disabled={saving}
                   >
-                    {group.id === activeGroupId ? 'Active' : 'Use Group'}
+                    Go to {group.name}
                   </button>
                 </li>
               ))}

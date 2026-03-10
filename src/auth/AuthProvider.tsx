@@ -519,8 +519,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (role !== 'admin' && role !== 'member') throw new Error('Invalid role update.')
 
       const actorGroup = groups.find((item) => item.id === groupId)
-      if (!actorGroup || actorGroup.status !== 'active' || actorGroup.role !== 'owner') {
-        throw new Error('Only group owners can change member roles.')
+      const isGroupAdmin = actorGroup?.status === 'active' && (actorGroup.role === 'owner' || actorGroup.role === 'admin')
+      if (!actorGroup || !isGroupAdmin) {
+        throw new Error('Only group owners or admins can change member roles.')
       }
 
       await setDoc(

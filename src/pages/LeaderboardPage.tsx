@@ -168,6 +168,20 @@ export function LeaderboardPage() {
     enabled: Boolean(activeGroupId && user?.uid && compareUid),
   })
 
+  const data = leaderboardQuery.data
+  const entries = useMemo(
+    () => data?.leaderboard.entries ?? [],
+    [data?.leaderboard.entries],
+  )
+  const compareOptions = useMemo(
+    () => entries.filter((entry) => entry.uid !== user?.uid),
+    [entries, user?.uid],
+  )
+  const uidToDisplayName = useMemo(
+    () => Object.fromEntries(entries.map((e) => [e.uid, e.displayName])),
+    [entries],
+  )
+
   if (leaderboardQuery.isLoading) {
     return (
       <section>
@@ -185,13 +199,6 @@ export function LeaderboardPage() {
       </section>
     )
   }
-
-  const data = leaderboardQuery.data
-  const entries = data?.leaderboard.entries ?? []
-  const compareOptions = useMemo(
-    () => entries.filter((entry) => entry.uid !== user?.uid),
-    [entries, user?.uid],
-  )
 
   return (
     <section>
@@ -281,13 +288,13 @@ export function LeaderboardPage() {
             <p>
               Most accurate:{' '}
               {awardsQuery.data.mostAccurate
-                ? `${awardsQuery.data.mostAccurate.uid} (${awardsQuery.data.mostAccurate.score})`
+                ? `${uidToDisplayName[awardsQuery.data.mostAccurate.uid] ?? awardsQuery.data.mostAccurate.uid} (${awardsQuery.data.mostAccurate.score})`
                 : 'N/A'}
             </p>
             <p>
               Risk taker:{' '}
               {awardsQuery.data.riskTaker
-                ? `${awardsQuery.data.riskTaker.uid} (volatility ${awardsQuery.data.riskTaker.volatility})`
+                ? `${uidToDisplayName[awardsQuery.data.riskTaker.uid] ?? awardsQuery.data.riskTaker.uid} (volatility ${awardsQuery.data.riskTaker.volatility})`
                 : 'N/A'}
             </p>
             <p>
