@@ -3,7 +3,7 @@ import { httpsCallable } from 'firebase/functions'
 import { useMemo, useState } from 'react'
 import { useAuth } from '../auth/useAuth'
 import { CountryFlag, TeamLogo } from '../components/Branding'
-import { functions } from '../lib/firebase'
+import { db } from '../lib/firebase'
 import { resolveSeasonForClient } from '../lib/season'
 
 type RaceInfo = {

@@ -43,41 +43,7 @@ type DashboardGroupOverview = {
   members: DashboardMember[]
 }
 
-type DashboardRaceSummary = {
-  seasonId: string
-  raceId: string
-  raceName: string
-  round: number
-  raceStartAt?: Date
-  lockAt?: Date
-  status: RaceStatus
-}
-
-function formatCountdown(target: Date | undefined, now: Date): string {
-  if (!target) return 'TBD'
-  const diff = target.getTime() - now.getTime()
-  if (diff <= 0) return 'Locked'
-
-  const totalMinutes = Math.floor(diff / 60000)
-  const days = Math.floor(totalMinutes / (60 * 24))
-  const hours = Math.floor((totalMinutes % (60 * 24)) / 60)
-  const minutes = totalMinutes % 60
-
-  if (days > 0) return `${days.toString().padStart(2, '0')}d ${hours.toString().padStart(2, '0')}h`
-  if (hours > 0) return `${hours.toString().padStart(2, '0')}h ${minutes.toString().padStart(2, '0')}m`
-  return `${minutes.toString().padStart(2, '0')}m`
-}
-
-function getRaceState(race: DashboardRaceSummary | null): 'Open' | 'Locked' | 'Completed' {
-  if (!race) return 'Locked'
-  if (race.status === 'completed' || race.status === 'results_ingested') return 'Completed'
-  const lockAt = race.lockAt ?? race.raceStartAt
-  if (race.status === 'in_progress') return 'Locked'
-  if (lockAt && lockAt <= new Date()) return 'Locked'
-  return 'Open'
-}
-
-async function fetchTargetRace(seasonId: string): Promise<DashboardRaceSummary> {
+async function fetchTargetRace(seasonId: string): Promise<{ id: string; name: string; round: number; raceStartAt?: Date }> {
   const racesQuery = query(collection(db, 'races'), where('seasonId', '==', seasonId))
   const racesSnapshot = await getDocs(racesQuery)
 
@@ -311,18 +277,13 @@ export function DashboardPage() {
 
         {targetRace ? (
           <>
-            <div className="dashboard-spotlight-main">
-              <div className="dashboard-race-meta">
-                <p className="dashboard-race-kicker">
-                  <CountryFlag raceName={targetRace.raceName} size="sm" /> Round {targetRace.round}
-                </p>
-                <h3>{targetRace.raceName}</h3>
-                <p>
-                  Lock closes{' '}
-                  <strong>
-                    {(targetRace.lockAt ?? targetRace.raceStartAt)?.toLocaleString() ?? 'TBD'}
-                  </strong>
-                </p>
+            <p>
+              Race: <strong><CountryFlag raceName={currentPickQuery.data.raceName} size="sm" /> {currentPickQuery.data.raceName}</strong>
+            </p>
+            <div className="pick-summary-grid">
+              <div>
+                <span>P1</span>
+                <strong>{currentPickQuery.data.podium.p1}</strong>
               </div>
 
               <div className="dashboard-countdown-block">
@@ -345,159 +306,127 @@ export function DashboardPage() {
                 <strong>{activeMembersCount || '—'}</strong>
               </div>
             </div>
+            <p>
+              Constructors:{' '}
+              {currentPickQuery.data.constructors.length > 0 ? (
+                <span className="brand-inline-list">
+                  {currentPickQuery.data.constructors.map((constructorId) => (
+                    <span key={constructorId} className="brand-inline-item">
+                      <TeamLogo constructorId={constructorId} name={getTeamBrand(constructorId).label} size="sm" />
+                      <strong>{getTeamBrand(constructorId).label}</strong>
+                    </span>
+                  ))}
+                </span>
+              ) : (
+                <strong>None selected</strong>
+              )}
+            </p>
+            <p>
+              Last updated:{' '}
+              <strong>
+                {currentPickQuery.data.updatedAt
+                  ? new Date(currentPickQuery.data.updatedAt).toLocaleString()
+                  : 'Unknown'}
+              </strong>
+            </p>
           </>
         ) : null}
       </div>
 
-      <div className="dashboard-grid-layout">
-        <div className="dashboard-column">
-          <article className="dashboard-module">
-            <h3>Current Picks</h3>
+      <div className="dashboard-card">
+        <h3>Current Standings</h3>
+        {groupOverviewQuery.isLoading ? <p>Loading standings...</p> : null}
+        {groupOverviewQuery.isError ? (
+          <p className="validation-error">{(groupOverviewQuery.error as Error).message}</p>
+        ) : null}
+        {groupOverviewQuery.data && groupOverviewQuery.data.standings.length > 0 ? (
+          <ul className="race-score-list">
+            {groupOverviewQuery.data.standings.slice(0, 8).map((entry) => (
+              <li key={entry.uid}>
+                <span>
+                  #{entry.rank} {entry.displayName}
+                </span>
+                <strong>{entry.points} pts</strong>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {groupOverviewQuery.data && groupOverviewQuery.data.standings.length === 0 ? (
+          <p>No standings generated yet for this group.</p>
+        ) : null}
+      </div>
 
-            {currentPickQuery.isLoading ? <p>Loading your picks...</p> : null}
-            {currentPickQuery.isError ? (
-              <p className="validation-error">{(currentPickQuery.error as Error).message}</p>
-            ) : null}
-            {!currentPickQuery.isLoading && !currentPickQuery.isError && !currentPickQuery.data ? (
-              <p className="dashboard-empty-state">No saved pick yet for the next race in this group.</p>
-            ) : null}
+      <div className="dashboard-card">
+        <h3>Members</h3>
+        {groupOverviewQuery.isLoading ? <p>Loading members...</p> : null}
+        {groupOverviewQuery.data ? (
+          <ul className="race-score-list">
+            {groupOverviewQuery.data.members.map((member) => (
+              <li key={member.uid}>
+                <span>{member.displayName}</span>
+                <strong>
+                  {member.role}
+                  {member.status === 'pending' ? ' • pending' : ''}
+                </strong>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
 
-            {currentPickQuery.data ? (
-              <>
-                <p className="dashboard-module-meta">
-                  <CountryFlag raceName={currentPickQuery.data.raceName} size="sm" /> {currentPickQuery.data.raceName}
-                </p>
-                <div className="dashboard-picks-list">
-                  <div className="dashboard-pick-row">
-                    <span>P1</span>
-                    <strong>{currentPickQuery.data.podium.p1}</strong>
-                  </div>
-                  <div className="dashboard-pick-row">
-                    <span>P2</span>
-                    <strong>{currentPickQuery.data.podium.p2}</strong>
-                  </div>
-                  <div className="dashboard-pick-row">
-                    <span>P3</span>
-                    <strong>{currentPickQuery.data.podium.p3}</strong>
-                  </div>
-                </div>
-                <div className="dashboard-team-row">
-                  {currentPickQuery.data.constructors.length > 0 ? (
-                    currentPickQuery.data.constructors.map((constructorId) => (
-                      <div key={constructorId} className="dashboard-team-pill">
-                        <TeamLogo constructorId={constructorId} name={getTeamBrand(constructorId).label} size="sm" />
-                        <span>{getTeamBrand(constructorId).label}</span>
-                      </div>
-                    ))
-                  ) : (
-                    <span className="dashboard-empty-state">No constructors selected.</span>
-                  )}
-                </div>
-                <p className="dashboard-module-meta">
-                  Updated {currentPickQuery.data.updatedAt ? new Date(currentPickQuery.data.updatedAt).toLocaleString() : 'recently'}
-                </p>
-              </>
-            ) : null}
-          </article>
+      <div className="dashboard-card">
+        <h3>Notifications</h3>
+        {notificationPrefsQuery.data ? (
+          <div className="pick-summary-grid">
+            <div>
+              <span>Email</span>
+              <button
+                type="button"
+                onClick={() =>
+                  void saveNotificationPreferences({
+                    emailEnabled: !notificationPrefsQuery.data?.emailEnabled,
+                    pushEnabled: Boolean(notificationPrefsQuery.data?.pushEnabled),
+                    lockReminderMinutesBefore: Number(notificationPrefsQuery.data?.lockReminderMinutesBefore ?? 60),
+                  })
+                }
+              >
+                {notificationPrefsQuery.data.emailEnabled ? 'On' : 'Off'}
+              </button>
+            </div>
+            <div>
+              <span>Push</span>
+              <button
+                type="button"
+                onClick={() =>
+                  void saveNotificationPreferences({
+                    emailEnabled: Boolean(notificationPrefsQuery.data?.emailEnabled),
+                    pushEnabled: !notificationPrefsQuery.data?.pushEnabled,
+                    lockReminderMinutesBefore: Number(notificationPrefsQuery.data?.lockReminderMinutesBefore ?? 60),
+                  })
+                }
+              >
+                {notificationPrefsQuery.data.pushEnabled ? 'On' : 'Off'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p>Loading notification settings...</p>
+        )}
+        {notificationNotice ? <p className="notice-text">{notificationNotice}</p> : null}
 
-          <article className="dashboard-module">
-            <h3>Members</h3>
-            {groupOverviewQuery.isLoading ? <p>Loading members...</p> : null}
-            {groupOverviewQuery.data ? (
-              <ul className="dashboard-members-list">
-                {groupOverviewQuery.data.members.slice(0, 8).map((member) => (
-                  <li key={member.uid} className="dashboard-member-row">
-                    <span>{member.displayName}</span>
-                    <span className={`dashboard-role-pill ${member.status === 'pending' ? 'pending' : ''}`}>
-                      {member.role}
-                      {member.status === 'pending' ? ' • pending' : ''}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </article>
-        </div>
-
-        <div className="dashboard-column">
-          <article className="dashboard-module">
-            <h3>Current Standings</h3>
-            {groupOverviewQuery.isLoading ? <p>Loading standings...</p> : null}
-            {groupOverviewQuery.isError ? (
-              <p className="validation-error">{(groupOverviewQuery.error as Error).message}</p>
-            ) : null}
-            {groupOverviewQuery.data && groupOverviewQuery.data.standings.length > 0 ? (
-              <ol className="dashboard-standings-list">
-                {groupOverviewQuery.data.standings.slice(0, 8).map((entry) => (
-                  <li
-                    key={entry.uid}
-                    className={`dashboard-standing-row ${entry.uid === user?.uid ? 'current-user' : ''}`}
-                  >
-                    <span className="dashboard-standing-rank">#{entry.rank}</span>
-                    <span className="dashboard-standing-name">{entry.displayName}</span>
-                    <strong>{entry.points} pts</strong>
-                  </li>
-                ))}
-              </ol>
-            ) : null}
-            {groupOverviewQuery.data && groupOverviewQuery.data.standings.length === 0 ? (
-              <p className="dashboard-empty-state">No standings generated yet for this group.</p>
-            ) : null}
-          </article>
-
-          <article className="dashboard-module">
-            <h3>Activity & Notifications</h3>
-
-            {notificationPrefsQuery.data ? (
-              <div className="dashboard-notification-toggles">
-                <button
-                  type="button"
-                  className="secondary-btn"
-                  onClick={() =>
-                    void saveNotificationPreferences({
-                      emailEnabled: !notificationPrefsQuery.data?.emailEnabled,
-                      pushEnabled: Boolean(notificationPrefsQuery.data?.pushEnabled),
-                      lockReminderMinutesBefore: Number(notificationPrefsQuery.data?.lockReminderMinutesBefore ?? 60),
-                    })
-                  }
-                >
-                  Email {notificationPrefsQuery.data.emailEnabled ? 'On' : 'Off'}
-                </button>
-                <button
-                  type="button"
-                  className="secondary-btn"
-                  onClick={() =>
-                    void saveNotificationPreferences({
-                      emailEnabled: Boolean(notificationPrefsQuery.data?.emailEnabled),
-                      pushEnabled: !notificationPrefsQuery.data?.pushEnabled,
-                      lockReminderMinutesBefore: Number(notificationPrefsQuery.data?.lockReminderMinutesBefore ?? 60),
-                    })
-                  }
-                >
-                  Push {notificationPrefsQuery.data.pushEnabled ? 'On' : 'Off'}
-                </button>
-              </div>
-            ) : null}
-
-            {notificationNotice ? <p className="notice-text">{notificationNotice}</p> : null}
-
-            {notificationsQuery.data?.length ? (
-              <ul className="dashboard-feed-list">
-                {notificationsQuery.data.map((item) => (
-                  <li key={item.id} className="dashboard-feed-row">
-                    <div>
-                      <strong>{item.title}</strong>
-                      <p>{item.body}</p>
-                    </div>
-                    <span>{new Date(item.createdAt).toLocaleString()}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="dashboard-empty-state">No recent notifications.</p>
-            )}
-          </article>
-        </div>
+        {notificationsQuery.data?.length ? (
+          <ul className="race-score-list">
+            {notificationsQuery.data.map((item) => (
+              <li key={item.id}>
+                <span>{item.title}</span>
+                <strong>{new Date(item.createdAt).toLocaleString()}</strong>
+                <span>{item.body}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p>No recent notifications.</p>
+        )}
       </div>
     </section>
   )
