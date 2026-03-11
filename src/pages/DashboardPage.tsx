@@ -43,7 +43,36 @@ type DashboardGroupOverview = {
   members: DashboardMember[]
 }
 
-async function fetchTargetRace(seasonId: string): Promise<{ id: string; name: string; round: number; raceStartAt?: Date }> {
+function getRaceState(race: DashboardRaceSummary | null): string {
+  if (!race) return 'Unavailable'
+  if (race.status === 'completed' || race.status === 'results_ingested') return 'Completed'
+  if (race.status === 'in_progress') return 'In Progress'
+
+  const effectiveLockAt = race.lockAt ?? race.raceStartAt
+  if (effectiveLockAt && effectiveLockAt <= new Date()) {
+    return 'Locked'
+  }
+
+  return 'Open'
+}
+
+function formatCountdown(targetDate: Date | undefined, now: Date): string {
+  if (!targetDate) return 'No lock configured'
+
+  const diffMs = targetDate.getTime() - now.getTime()
+  if (diffMs <= 0) return 'Locked'
+
+  const totalSeconds = Math.floor(diffMs / 1000)
+  const days = Math.floor(totalSeconds / 86_400)
+  const hours = Math.floor((totalSeconds % 86_400) / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  return `${minutes}m`
+}
+
+async function fetchTargetRace(seasonId: string): Promise<DashboardRaceSummary> {
   const racesQuery = query(collection(db, 'races'), where('seasonId', '==', seasonId))
   const racesSnapshot = await getDocs(racesQuery)
 
@@ -278,12 +307,16 @@ export function DashboardPage() {
         {targetRace ? (
           <>
             <p>
-              Race: <strong><CountryFlag raceName={currentPickQuery.data.raceName} size="sm" /> {currentPickQuery.data.raceName}</strong>
+              Race:{' '}
+              <strong>
+                <CountryFlag raceName={currentPick?.raceName ?? targetRace.raceName} size="sm" />{' '}
+                {currentPick?.raceName ?? targetRace.raceName}
+              </strong>
             </p>
             <div className="pick-summary-grid">
               <div>
                 <span>P1</span>
-                <strong>{currentPickQuery.data.podium.p1}</strong>
+                <strong>{currentPick?.podium.p1 ?? 'No pick yet'}</strong>
               </div>
 
               <div className="dashboard-countdown-block">
@@ -308,9 +341,9 @@ export function DashboardPage() {
             </div>
             <p>
               Constructors:{' '}
-              {currentPickQuery.data.constructors.length > 0 ? (
+              {currentPick && currentPick.constructors.length > 0 ? (
                 <span className="brand-inline-list">
-                  {currentPickQuery.data.constructors.map((constructorId) => (
+                  {currentPick.constructors.map((constructorId) => (
                     <span key={constructorId} className="brand-inline-item">
                       <TeamLogo constructorId={constructorId} name={getTeamBrand(constructorId).label} size="sm" />
                       <strong>{getTeamBrand(constructorId).label}</strong>
@@ -324,9 +357,7 @@ export function DashboardPage() {
             <p>
               Last updated:{' '}
               <strong>
-                {currentPickQuery.data.updatedAt
-                  ? new Date(currentPickQuery.data.updatedAt).toLocaleString()
-                  : 'Unknown'}
+                {currentPick?.updatedAt ? new Date(currentPick.updatedAt).toLocaleString() : 'No pick submitted'}
               </strong>
             </p>
           </>
