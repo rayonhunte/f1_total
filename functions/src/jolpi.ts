@@ -197,8 +197,12 @@ export async function fetchSeasonConstructors(seasonYear: number): Promise<LiveC
 }
 
 export function isDnfStatus(status: string): boolean {
-  if (status === 'Finished') return false
-  if (/^\+\d+ Laps?$/i.test(status)) return false
-  if (/^\+\d+ Lap$/i.test(status)) return false
+  const normalized = status.trim()
+
+  if (!normalized) return false
+  if (/^Finished$/i.test(normalized)) return false
+  if (/^Lapped$/i.test(normalized)) return false
+  if (/^\+\d+\s+Laps?$/i.test(normalized)) return false
+  if (/^\+\d+(?::\d{1,2})?\.\d+$/i.test(normalized)) return false
   return true
 }
