@@ -1,9 +1,9 @@
-import { collection, getDocs, getDoc, doc, query, where } from 'firebase/firestore'
 import { useQuery } from '@tanstack/react-query'
+import { httpsCallable } from 'firebase/functions'
 import { useMemo, useState } from 'react'
 import { useAuth } from '../auth/useAuth'
 import { CountryFlag, TeamLogo } from '../components/Branding'
-import { db } from '../lib/firebase'
+import { functions } from '../lib/firebase'
 import { resolveSeasonForClient } from '../lib/season'
 
 type RaceInfo = {
@@ -32,8 +32,15 @@ type RaceResultData = {
 }
 
 type StatsBootstrap = {
+  source: {
+    schedule: 'jolpi' | 'firestore'
+    drivers: 'jolpi' | 'firestore'
+    constructors: 'jolpi' | 'firestore'
+    results: 'firestore'
+  }
   seasonId: string
   seasonName: string
+  seasonYear: number
   races: RaceInfo[]
   results: RaceResultData[]
   drivers: DriverOption[]
@@ -45,99 +52,15 @@ type StatsBootstrap = {
   }
 }
 
-function safeNumber(value: unknown, fallback: number): number {
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : fallback
-}
-
-async function fetchRacesForSeason(seasonId: string): Promise<RaceInfo[]> {
-  const racesSnapshot = await getDocs(query(collection(db, 'races'), where('seasonId', '==', seasonId)))
-  if (racesSnapshot.empty) return []
-  return racesSnapshot.docs
-    .map((raceDoc) => {
-      const data = raceDoc.data()
-      return {
-        id: raceDoc.id,
-        name: (data.name as string | undefined) ?? raceDoc.id,
-        round: Number(data.round ?? 0),
-      }
-    })
-    .sort((a, b) => a.round - b.round)
-}
-
-async function fetchOptions<T extends { id: string; name: string }>(
-  collectionName: 'drivers' | 'constructors',
-): Promise<T[]> {
-  const snapshot = await getDocs(collection(db, collectionName))
-  return snapshot.docs
-    .map((item) => {
-      const data = item.data()
-      return { id: item.id, name: (data.name as string | undefined) ?? item.id } as T
-    })
-    .sort((a, b) => a.name.localeCompare(b.name))
+type StatsBootstrapRequest = {
+  seasonId?: string
 }
 
 async function fetchStatsBootstrap(): Promise<StatsBootstrap> {
   const season = await resolveSeasonForClient()
-  const seasonId = season.id
-  const seasonSnap = await getDoc(doc(db, 'seasons', seasonId))
-  const seasonData = seasonSnap.data() ?? {}
-  const rawScoring = (seasonData.scoringRules && typeof seasonData.scoringRules === 'object'
-    ? seasonData.scoringRules
-    : {}) as Record<string, unknown>
-  const rawPodium = (rawScoring.podiumPoints && typeof rawScoring.podiumPoints === 'object'
-    ? rawScoring.podiumPoints
-    : {}) as Record<string, unknown>
-  const rawStandings = (rawScoring.standingsMovement && typeof rawScoring.standingsMovement === 'object'
-    ? rawScoring.standingsMovement
-    : {}) as Record<string, unknown>
-  const rawDnf = (rawScoring.dnfPenalty && typeof rawScoring.dnfPenalty === 'object'
-    ? rawScoring.dnfPenalty
-    : {}) as Record<string, unknown>
-
-  const scoringRules = {
-    podiumPoints: {
-      p1: safeNumber(rawPodium.p1, 25),
-      p2: safeNumber(rawPodium.p2, 18),
-      p3: safeNumber(rawPodium.p3, 15),
-    },
-    driverGain: safeNumber(rawStandings.driverGain, 1),
-    dnfPenalty: {
-      enabled: rawDnf.enabled === true,
-      value: safeNumber(rawDnf.value, 0),
-    },
-  }
-
-  const [races, resultsSnapshot, drivers, constructors] = await Promise.all([
-    fetchRacesForSeason(seasonId),
-    getDocs(query(collection(db, 'results'), where('seasonId', '==', seasonId))),
-    fetchOptions<DriverOption>('drivers'),
-    fetchOptions<ConstructorOption>('constructors'),
-  ])
-
-  const results: RaceResultData[] = resultsSnapshot.docs
-    .map((resDoc) => {
-      const data = resDoc.data()
-      return {
-        raceId: resDoc.id,
-        round: Number(data.round ?? 0),
-        raceName: data.raceName as string | undefined,
-        podium: (data.podium as [string, string, string]) ?? ['', '', ''],
-        driverResults: (data.driverResults as ResultDriverRow[]) ?? [],
-        driverMovement: (data.driverMovement as Record<string, number> | undefined) ?? {},
-      }
-    })
-    .sort((a, b) => a.round - b.round)
-
-  return {
-    seasonId,
-    seasonName: season.name,
-    races,
-    results,
-    drivers,
-    constructors,
-    scoringRules,
-  }
+  const callable = httpsCallable<StatsBootstrapRequest, StatsBootstrap>(functions, 'getStatsBootstrap')
+  const response = await callable({ seasonId: season.id })
+  return response.data
 }
 
 function potentialPointsForDriver(
@@ -162,6 +85,10 @@ function potentialPointsForDriver(
 }
 
 type StatsTab = 'race' | 'drivers'
+
+function formatSourceLabel(source: 'jolpi' | 'firestore'): string {
+  return source === 'jolpi' ? 'Jolpi API' : 'Firestore fallback'
+}
 
 export function RaceStatsPage() {
   const { activeGroupId } = useAuth()
@@ -237,6 +164,10 @@ export function RaceStatsPage() {
       <p>
         View race results, driver stats, and <strong>potential fantasy points</strong> if you had picked each driver
         (podium match + movement; captain multiplier not applied).
+      </p>
+      <p>
+        Sources: schedule {formatSourceLabel(data.source.schedule)}, drivers {formatSourceLabel(data.source.drivers)},
+        constructors {formatSourceLabel(data.source.constructors)}, scored results app sync data.
       </p>
 
       {data.results.length === 0 ? (
