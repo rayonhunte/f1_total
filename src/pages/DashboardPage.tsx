@@ -4,6 +4,8 @@ import { httpsCallable } from 'firebase/functions'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/useAuth'
+import { CountryFlag, TeamLogo } from '../components/Branding'
+import { getTeamBrand } from '../lib/branding'
 import { db, functions } from '../lib/firebase'
 import { resolveSeasonForClient } from '../lib/season'
 
@@ -165,7 +167,7 @@ export function DashboardPage() {
         {currentPickQuery.data ? (
           <>
             <p>
-              Race: <strong>{currentPickQuery.data.raceName}</strong>
+              Race: <strong><CountryFlag raceName={currentPickQuery.data.raceName} size="sm" /> {currentPickQuery.data.raceName}</strong>
             </p>
             <div className="pick-summary-grid">
               <div>
@@ -182,7 +184,19 @@ export function DashboardPage() {
               </div>
             </div>
             <p>
-              Constructors: <strong>{currentPickQuery.data.constructors.join(', ') || 'None selected'}</strong>
+              Constructors:{' '}
+              {currentPickQuery.data.constructors.length > 0 ? (
+                <span className="brand-inline-list">
+                  {currentPickQuery.data.constructors.map((constructorId) => (
+                    <span key={constructorId} className="brand-inline-item">
+                      <TeamLogo constructorId={constructorId} name={getTeamBrand(constructorId).label} size="sm" />
+                      <strong>{getTeamBrand(constructorId).label}</strong>
+                    </span>
+                  ))}
+                </span>
+              ) : (
+                <strong>None selected</strong>
+              )}
             </p>
             <p>
               Last updated:{' '}

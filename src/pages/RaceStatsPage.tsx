@@ -2,6 +2,7 @@ import { collection, getDocs, getDoc, doc, query, where } from 'firebase/firesto
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { useAuth } from '../auth/useAuth'
+import { CountryFlag, TeamLogo } from '../components/Branding'
 import { db } from '../lib/firebase'
 import { resolveSeasonForClient } from '../lib/season'
 
@@ -227,6 +228,8 @@ export function RaceStatsPage() {
   }
 
   const data = bootstrapQuery.data
+  const selectedRaceName =
+    selectedResult?.raceName ?? data.races.find((r) => r.id === selectedResult?.raceId)?.name ?? selectedResult?.raceId ?? ''
 
   return (
     <section className="stats-page">
@@ -285,7 +288,7 @@ export function RaceStatsPage() {
                 {selectedResult && (
                   <div className="admin-card stats-driver-block">
                     <h3>
-                      {selectedResult.raceName ?? data.races.find((r) => r.id === selectedResult.raceId)?.name ?? selectedResult.raceId}
+                      <CountryFlag raceName={selectedRaceName} size="sm" /> {selectedRaceName}
                     </h3>
                     <div className="stats-table-wrap">
                       <table className="stats-table">
@@ -306,7 +309,16 @@ export function RaceStatsPage() {
                             <tr key={row.driverId}>
                               <td>{idx + 1}</td>
                               <td>{driverById.get(row.driverId)?.name ?? row.driverId}</td>
-                              <td>{constructorById.get(row.constructorId)?.name ?? row.constructorId}</td>
+                              <td>
+                                <span className="brand-inline-item">
+                                  <TeamLogo
+                                    constructorId={row.constructorId}
+                                    name={constructorById.get(row.constructorId)?.name ?? row.constructorId}
+                                    size="sm"
+                                  />
+                                  {constructorById.get(row.constructorId)?.name ?? row.constructorId}
+                                </span>
+                              </td>
                               <td>{row.points}</td>
                               <td>{row.dnf ? 'Yes' : '—'}</td>
                               <td><strong>{potential}</strong></td>

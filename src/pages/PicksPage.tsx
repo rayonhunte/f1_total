@@ -14,6 +14,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { z } from 'zod'
 import { useAuth } from '../auth/useAuth'
+import { CountryFlag, TeamLogo } from '../components/Branding'
+import { countryCodeToFlagEmoji, getRaceCountryCode } from '../lib/branding'
 import { db, functions } from '../lib/firebase'
 import { resolveSeasonForClient } from '../lib/season'
 
@@ -663,7 +665,9 @@ export function PicksPage() {
               onClick={() => setSelectedRaceId(race.id)}
               ref={race.id === focusRaceId ? focusChipRef : null}
             >
-              <span className="race-chip-round">R{race.round}</span>
+              <span className="race-chip-round">
+                <CountryFlag raceName={race.name} size="sm" /> R{race.round}
+              </span>
               <span className="race-chip-name">{race.name}</span>
               <span className={`race-chip-state ${raceState.isLocked ? 'locked' : 'open'}`}>{raceState.stateLabel}</span>
             </button>
@@ -675,9 +679,10 @@ export function PicksPage() {
         <select value={data.race.id} onChange={(event) => setSelectedRaceId(event.target.value)}>
           {data.races.map((race) => {
             const raceLock = computeRaceLockInfo(race, new Date(nowMs))
+            const flag = countryCodeToFlagEmoji(getRaceCountryCode(race.name))
             return (
               <option key={race.id} value={race.id}>
-                R{race.round} - {race.name} [{raceLock.stateLabel}]
+                {flag ? `${flag} ` : ''}R{race.round} - {race.name} [{raceLock.stateLabel}]
               </option>
             )
           })}
@@ -834,6 +839,7 @@ export function PicksPage() {
                   disabled={lockInfo.isLocked}
                 />
                 <span>
+                  <TeamLogo constructorId={constructor.id} name={constructor.name} />
                   {constructor.name}
                   {constructor.fantasyCost != null ? ` (${constructor.fantasyCost})` : ''}
                 </span>
