@@ -228,46 +228,41 @@ export function MessagesPage() {
   const reversedMessages = [...messages].reverse()
 
   return (
-    <section>
+    <section className="messages-page">
       <h2>Group messages</h2>
       <p>Post messages and @-mention other members. Edits are timestamped.</p>
 
-      <div className="dashboard-card" style={{ maxHeight: '60vh', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ flex: 1, overflowY: 'auto', marginBottom: '1rem' }}>
+      <div className="dashboard-card messages-shell">
+        <div className="messages-list-wrap">
           {reversedMessages.length === 0 ? (
-            <p style={{ color: 'var(--muted)' }}>No messages yet. Send one below.</p>
+            <p className="messages-empty">No messages yet. Send one below.</p>
           ) : (
-            <ul className="race-score-list" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+            <ul className="race-score-list messages-list">
               {reversedMessages.map((msg) => (
                 <li
                   key={msg.id}
-                  style={{
-                    marginBottom: '0.75rem',
-                    padding: '0.5rem 0.65rem',
-                    borderLeft: msg.type === 'system' ? '3px solid var(--muted)' : undefined,
-                    opacity: msg.type === 'system' ? 0.95 : 1,
-                  }}
+                  className={`message-card ${msg.type === 'system' ? 'message-card-system' : ''}`}
                 >
                   {msg.type === 'system' ? (
                     <>
-                      <span style={{ fontWeight: 700, color: 'var(--muted)', fontSize: '0.85rem' }}>
+                      <span className="message-system-label">
                         System
                       </span>
-                      <span style={{ marginLeft: '0.35rem' }}>{msg.text}</span>
+                      <span className="message-system-text">{msg.text}</span>
                     </>
                   ) : (
                     <>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
-                        <div>
+                      <div className="message-header">
+                        <div className="message-author-block">
                           <strong>{msg.displayName ?? msg.uid ?? 'Unknown'}</strong>
                           {msg.editedAt && (
-                            <span style={{ fontSize: '0.8rem', color: 'var(--muted)', marginLeft: '0.35rem' }}>
+                            <span className="message-edited-meta">
                               (edited at {msg.editedAt.toLocaleString()})
                             </span>
                           )}
                         </div>
                         {msg.uid === profile?.uid && editingId !== msg.id && (
-                          <span style={{ display: 'flex', gap: '0.35rem' }}>
+                          <span className="message-actions">
                             <button type="button" className="secondary-btn" onClick={() => startEdit(msg)}>
                               Edit
                             </button>
@@ -282,23 +277,25 @@ export function MessagesPage() {
                         )}
                       </div>
                       {editingId === msg.id ? (
-                        <div style={{ marginTop: '0.5rem' }}>
+                        <div className="message-edit-block">
                           <textarea
                             aria-label="Edit message text"
                             value={editText}
                             onChange={(e) => setEditText(e.target.value)}
                             rows={2}
-                            style={{ width: '100%', marginBottom: '0.35rem' }}
+                            className="message-edit-textarea"
                           />
-                          <button type="button" onClick={saveEdit}>
-                            Save
-                          </button>
-                          <button type="button" className="secondary-btn" onClick={cancelEdit} style={{ marginLeft: '0.35rem' }}>
-                            Cancel
-                          </button>
+                          <div className="message-edit-actions">
+                            <button type="button" onClick={saveEdit}>
+                              Save
+                            </button>
+                            <button type="button" className="secondary-btn" onClick={cancelEdit}>
+                              Cancel
+                            </button>
+                          </div>
                         </div>
                       ) : (
-                        <p style={{ margin: '0.25rem 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                        <p className="message-text">
                           {msg.text}
                         </p>
                       )}
@@ -310,8 +307,8 @@ export function MessagesPage() {
           )}
         </div>
 
-        <div style={{ position: 'relative' }}>
-          <label htmlFor="messages-composer" style={{ display: 'block', marginBottom: '0.35rem', fontWeight: 600 }}>
+        <div className="messages-composer-wrap">
+          <label htmlFor="messages-composer" className="messages-composer-label">
             New message (type @ to mention)
           </label>
           <textarea
@@ -322,31 +319,18 @@ export function MessagesPage() {
             onBlur={() => setTimeout(() => setShowMentionDropdown(false), 180)}
             placeholder="Type a message..."
             rows={3}
-            style={{ width: '100%', resize: 'vertical' }}
+            className="messages-composer"
             disabled={submitting}
           />
           {showMentionDropdown && mentionCandidates.length > 0 && (
             <ul
-              className="race-score-list"
-              style={{
-                position: 'absolute',
-                bottom: '100%',
-                left: 0,
-                right: 0,
-                marginBottom: '0.25rem',
-                maxHeight: '120px',
-                overflowY: 'auto',
-                listStyle: 'none',
-                padding: '0.35rem',
-                zIndex: 10,
-              }}
+              className="race-score-list message-mentions"
             >
               {mentionCandidates.slice(0, 8).map((m) => (
                 <li key={m.uid}>
                   <button
                     type="button"
-                    className="secondary-btn"
-                    style={{ width: '100%', textAlign: 'left' }}
+                    className="secondary-btn mention-option-btn"
                     onClick={() => insertMention(m)}
                   >
                     {m.displayName || m.uid}
@@ -355,9 +339,11 @@ export function MessagesPage() {
               ))}
             </ul>
           )}
-          <button type="button" onClick={submitMessage} disabled={submitting || !composerText.trim()}>
-            {submitting ? 'Sending...' : 'Send'}
-          </button>
+          <div className="messages-composer-actions">
+            <button type="button" onClick={submitMessage} disabled={submitting || !composerText.trim()}>
+              {submitting ? 'Sending...' : 'Send'}
+            </button>
+          </div>
         </div>
       </div>
     </section>

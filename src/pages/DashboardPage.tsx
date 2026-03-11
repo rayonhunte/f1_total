@@ -22,6 +22,25 @@ type CurrentPickSummary = {
   updatedAt?: string
 }
 
+type DashboardStanding = {
+  uid: string
+  displayName: string
+  rank: number
+  points: number
+}
+
+type DashboardMember = {
+  uid: string
+  displayName: string
+  role: 'owner' | 'admin' | 'member'
+  status: 'active' | 'pending'
+}
+
+type DashboardGroupOverview = {
+  standings: DashboardStanding[]
+  members: DashboardMember[]
+}
+
 async function fetchTargetRace(seasonId: string): Promise<{ id: string; name: string; round: number; raceStartAt?: Date }> {
   const racesQuery = query(collection(db, 'races'), where('seasonId', '==', seasonId))
   const racesSnapshot = await getDocs(racesQuery)
@@ -85,6 +104,45 @@ async function fetchCurrentPick(uid: string, groupId: string): Promise<CurrentPi
   }
 }
 
+async function fetchDashboardGroupOverview(groupId: string): Promise<DashboardGroupOverview> {
+  const season = await resolveSeasonForClient()
+  const seasonId = season.id
+
+  const [leaderboardSnap, membersSnap] = await Promise.all([
+    getDoc(doc(db, 'leaderboards', `${seasonId}_${groupId}`)),
+    getDocs(collection(db, 'groups', groupId, 'members')),
+  ])
+
+  const standings = leaderboardSnap.exists()
+    ? (((leaderboardSnap.data().entries as Array<Record<string, unknown>> | undefined) ?? [])
+        .map((entry) => ({
+          uid: String(entry.uid ?? ''),
+          displayName: String(entry.displayName ?? entry.uid ?? 'Member'),
+          rank: Number(entry.rank ?? 0),
+          points: Number(entry.points ?? 0),
+        }))
+        .filter((entry) => Boolean(entry.uid))
+        .sort((a, b) => a.rank - b.rank))
+    : []
+
+  const members = membersSnap.docs
+    .map((memberDoc) => {
+      const data = memberDoc.data()
+      return {
+        uid: memberDoc.id,
+        displayName: String(data.displayName ?? data.email ?? memberDoc.id),
+        role: data.role === 'owner' || data.role === 'admin' ? data.role : 'member',
+        status: data.status === 'pending' ? 'pending' : 'active',
+      } satisfies DashboardMember
+    })
+    .sort((a, b) => {
+      if (a.status !== b.status) return a.status === 'active' ? -1 : 1
+      return a.displayName.localeCompare(b.displayName)
+    })
+
+  return { standings, members }
+}
+
 export function DashboardPage() {
   const { profile, groups, activeGroupId, user } = useAuth()
   const [notificationNotice, setNotificationNotice] = useState<string | null>(null)
@@ -130,6 +188,13 @@ export function DashboardPage() {
         .slice(0, 8)
     },
     enabled: Boolean(user?.uid),
+    refetchInterval: 60_000,
+  })
+
+  const groupOverviewQuery = useQuery({
+    queryKey: ['dashboard-group-overview', activeGroupId],
+    queryFn: () => fetchDashboardGroupOverview(activeGroupId!),
+    enabled: Boolean(activeGroupId),
     refetchInterval: 60_000,
   })
 
@@ -212,6 +277,47 @@ export function DashboardPage() {
         <Link to="/app/picks" className="secondary-btn card-link-btn">
           Edit Picks
         </Link>
+      </div>
+
+      <div className="dashboard-card">
+        <h3>Current Standings</h3>
+        {groupOverviewQuery.isLoading ? <p>Loading standings...</p> : null}
+        {groupOverviewQuery.isError ? (
+          <p className="validation-error">{(groupOverviewQuery.error as Error).message}</p>
+        ) : null}
+        {groupOverviewQuery.data && groupOverviewQuery.data.standings.length > 0 ? (
+          <ul className="race-score-list">
+            {groupOverviewQuery.data.standings.slice(0, 8).map((entry) => (
+              <li key={entry.uid}>
+                <span>
+                  #{entry.rank} {entry.displayName}
+                </span>
+                <strong>{entry.points} pts</strong>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {groupOverviewQuery.data && groupOverviewQuery.data.standings.length === 0 ? (
+          <p>No standings generated yet for this group.</p>
+        ) : null}
+      </div>
+
+      <div className="dashboard-card">
+        <h3>Members</h3>
+        {groupOverviewQuery.isLoading ? <p>Loading members...</p> : null}
+        {groupOverviewQuery.data ? (
+          <ul className="race-score-list">
+            {groupOverviewQuery.data.members.map((member) => (
+              <li key={member.uid}>
+                <span>{member.displayName}</span>
+                <strong>
+                  {member.role}
+                  {member.status === 'pending' ? ' • pending' : ''}
+                </strong>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
 
       <div className="dashboard-card">
