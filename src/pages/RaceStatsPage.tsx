@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import { useAuth } from '../auth/useAuth'
 import { CountryFlag, TeamLogo } from '../components/Branding'
 import { functions } from '../lib/firebase'
+import { isDidNotFinishStatus } from '../lib/raceResults'
 import { resolveSeasonForClient } from '../lib/season'
 
 type RaceInfo = {
@@ -19,6 +20,7 @@ type ResultDriverRow = {
   driverId: string
   constructorId: string
   points: number
+  status: string
   dnf: boolean
 }
 
@@ -79,7 +81,7 @@ function potentialPointsForDriver(
 
   if (rules.dnfPenalty.enabled && rules.dnfPenalty.value > 0) {
     const row = result.driverResults.find((r) => r.driverId === driverId)
-    if (row?.dnf) pts -= rules.dnfPenalty.value
+    if (row && isDidNotFinishStatus(row.status)) pts -= rules.dnfPenalty.value
   }
   return pts
 }
@@ -236,6 +238,7 @@ export function RaceStatsPage() {
                       <tbody>
                         {selectedResult.driverResults.map((row, idx) => {
                           const potential = potentialPointsForDriver(row.driverId, selectedResult, data.scoringRules)
+                          const didNotFinish = isDidNotFinishStatus(row.status)
                           return (
                             <tr key={row.driverId}>
                               <td>{idx + 1}</td>
@@ -251,7 +254,7 @@ export function RaceStatsPage() {
                                 </span>
                               </td>
                               <td>{row.points}</td>
-                              <td>{row.dnf ? 'Yes' : '—'}</td>
+                              <td>{didNotFinish ? 'Yes' : '—'}</td>
                               <td><strong>{potential}</strong></td>
                             </tr>
                           )

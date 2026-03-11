@@ -17,6 +17,7 @@ import { useAuth } from '../auth/useAuth'
 import { CountryFlag, TeamLogo } from '../components/Branding'
 import { countryCodeToFlagEmoji, getRaceCountryCode } from '../lib/branding'
 import { db, functions } from '../lib/firebase'
+import { isDidNotFinishStatus } from '../lib/raceResults'
 import { resolveSeasonForClient } from '../lib/season'
 
 type DriverOption = {
@@ -78,7 +79,7 @@ type PicksBootstrap = {
     raceId: string
     round: number
     podium: [string, string, string]
-    driverResults: Array<{ driverId: string; constructorId: string; points: number; dnf: boolean }>
+    driverResults: Array<{ driverId: string; constructorId: string; points: number; dnf: boolean; status: string }>
   }>
   existingPick?: {
     podium: {
@@ -310,7 +311,14 @@ async function fetchPicksBootstrap(uid: string, groupId: string, selectedRaceId?
         raceId: row.id,
         round: Number(data.round ?? 0),
         podium: (data.podium as [string, string, string]) ?? ['', '', ''],
-        driverResults: (data.driverResults as Array<{ driverId: string; constructorId: string; points: number; dnf: boolean }>) ?? [],
+        driverResults:
+          (data.driverResults as Array<{
+            driverId: string
+            constructorId: string
+            points: number
+            dnf: boolean
+            status: string
+          }>) ?? [],
       }
     })
     .sort((a, b) => b.round - a.round)
@@ -427,7 +435,7 @@ export function PicksPage() {
         const d = driverStats.get(row.driverId) ?? { races: 0, points: 0, dnfs: 0 }
         d.races += 1
         d.points += Number(row.points ?? 0)
-        if (row.dnf) d.dnfs += 1
+        if (isDidNotFinishStatus(row.status)) d.dnfs += 1
         driverStats.set(row.driverId, d)
 
         const c = constructorStats.get(row.constructorId) ?? { races: 0, points: 0 }

@@ -83,6 +83,7 @@ type StatsBootstrapResultDriverRow = {
   driverId: string
   constructorId: string
   points: number
+  status: string
   dnf: boolean
 }
 
