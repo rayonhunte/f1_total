@@ -69,6 +69,51 @@ type LiveRosterRequest = {
   seasonYear?: number
 }
 
+type GetStatsBootstrapRequest = {
+  seasonId?: string
+}
+
+type StatsBootstrapRaceInfo = {
+  id: string
+  name: string
+  round: number
+}
+
+type StatsBootstrapResultDriverRow = {
+  driverId: string
+  constructorId: string
+  points: number
+  dnf: boolean
+}
+
+type StatsBootstrapResponse = {
+  source: {
+    schedule: 'jolpi' | 'firestore'
+    drivers: 'jolpi' | 'firestore'
+    constructors: 'jolpi' | 'firestore'
+    results: 'firestore'
+  }
+  seasonId: string
+  seasonName: string
+  seasonYear: number
+  races: StatsBootstrapRaceInfo[]
+  results: Array<{
+    raceId: string
+    round: number
+    raceName?: string
+    podium: [string, string, string]
+    driverResults: StatsBootstrapResultDriverRow[]
+    driverMovement?: Record<string, number>
+  }>
+  drivers: Array<{ id: string; name: string }>
+  constructors: Array<{ id: string; name: string }>
+  scoringRules: {
+    podiumPoints: { p1: number; p2: number; p3: number }
+    driverGain: number
+    dnfPenalty: { enabled: boolean; value: number }
+  }
+}
+
 type UpdateRaceCircuitTimezoneRequest = {
   raceId: string
   circuitTimezone: string
@@ -464,6 +509,106 @@ async function fetchLiveRosterWithFallback(targetSeasonYear: number) {
   }
 
   throw new Error('Live roster unavailable from Jolpi API.')
+}
+
+async function fetchNamedOptionsFromCollection(
+  collectionName: 'drivers' | 'constructors',
+): Promise<Array<{ id: string; name: string }>> {
+  const snapshot = await db.collection(collectionName).get()
+  return snapshot.docs
+    .map((item) => ({
+      id: item.id,
+      name: String(item.data()?.name ?? item.id),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+async function fetchStatsRaceList(
+  seasonId: string,
+  seasonYear: number,
+): Promise<{ source: 'jolpi' | 'firestore'; races: StatsBootstrapRaceInfo[] }> {
+  try {
+    const schedule = await fetchSeasonSchedule(seasonYear)
+    if (schedule.length > 0) {
+      return {
+        source: 'jolpi',
+        races: schedule.map((race) => ({
+          id: `${seasonId}_r${race.round}`,
+          name: race.raceName,
+          round: race.round,
+        })),
+      }
+    }
+  } catch (error) {
+    logger.warn('Failed to fetch Jolpi schedule for stats bootstrap', {
+      seasonId,
+      seasonYear,
+      error: String(error),
+    })
+  }
+
+  const racesSnapshot = await db.collection('races').where('seasonId', '==', seasonId).get()
+  return {
+    source: 'firestore',
+    races: racesSnapshot.docs
+      .map((raceDoc) => {
+        const data = raceDoc.data()
+        return {
+          id: raceDoc.id,
+          name: String(data.name ?? raceDoc.id),
+          round: Number(data.round ?? 0),
+        }
+      })
+      .sort((a, b) => a.round - b.round),
+  }
+}
+
+async function fetchStatsDriverOptions(
+  seasonYear: number,
+): Promise<{ source: 'jolpi' | 'firestore'; drivers: Array<{ id: string; name: string }> }> {
+  try {
+    const drivers = await fetchSeasonDrivers(seasonYear)
+    if (drivers.length > 0) {
+      return {
+        source: 'jolpi',
+        drivers: drivers.map((driver) => ({ id: driver.id, name: driver.name })),
+      }
+    }
+  } catch (error) {
+    logger.warn('Failed to fetch Jolpi drivers for stats bootstrap', {
+      seasonYear,
+      error: String(error),
+    })
+  }
+
+  return {
+    source: 'firestore',
+    drivers: await fetchNamedOptionsFromCollection('drivers'),
+  }
+}
+
+async function fetchStatsConstructorOptions(
+  seasonYear: number,
+): Promise<{ source: 'jolpi' | 'firestore'; constructors: Array<{ id: string; name: string }> }> {
+  try {
+    const constructors = await fetchSeasonConstructors(seasonYear)
+    if (constructors.length > 0) {
+      return {
+        source: 'jolpi',
+        constructors: constructors.map((constructor) => ({ id: constructor.id, name: constructor.name })),
+      }
+    }
+  } catch (error) {
+    logger.warn('Failed to fetch Jolpi constructors for stats bootstrap', {
+      seasonYear,
+      error: String(error),
+    })
+  }
+
+  return {
+    source: 'firestore',
+    constructors: await fetchNamedOptionsFromCollection('constructors'),
+  }
 }
 
 async function pickRaceForSync(
@@ -1491,6 +1636,77 @@ export const getLiveRoster = onCall(
         'internal',
         error instanceof Error ? error.message : 'Failed to fetch live roster.',
       )
+    }
+  },
+)
+
+export const getStatsBootstrap = onCall(
+  {
+    region: 'us-central1',
+  },
+  async (request): Promise<StatsBootstrapResponse> => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication is required.')
+    }
+
+    const data = (request.data ?? {}) as GetStatsBootstrapRequest
+    const seasonId = data.seasonId?.trim() || (await findActiveSeasonId())
+    const seasonSnap = await db.collection('seasons').doc(seasonId).get()
+
+    if (!seasonSnap.exists) {
+      throw new HttpsError('not-found', `Season ${seasonId} not found.`)
+    }
+
+    const seasonData = seasonSnap.data() as Partial<SeasonDoc>
+    const seasonName = String(seasonData.name ?? seasonId)
+    const seasonYear = Number(seasonData.year ?? new Date().getUTCFullYear())
+    const scoringRules = mergeScoringRules(seasonData.scoringRules)
+
+    const [racesResult, driversResult, constructorsResult, resultsSnap] = await Promise.all([
+      fetchStatsRaceList(seasonId, seasonYear),
+      fetchStatsDriverOptions(seasonYear),
+      fetchStatsConstructorOptions(seasonYear),
+      db.collection('results').where('seasonId', '==', seasonId).get(),
+    ])
+
+    const results = resultsSnap.docs
+      .map((resultDoc) => {
+        const data = resultDoc.data() as Partial<RaceResultDoc>
+        return {
+          raceId: resultDoc.id,
+          round: Number(data.round ?? 0),
+          raceName: typeof data.raceName === 'string' ? data.raceName : undefined,
+          podium: (data.podium as [string, string, string]) ?? ['', '', ''],
+          driverResults: Array.isArray(data.driverResults)
+            ? (data.driverResults as StatsBootstrapResultDriverRow[])
+            : [],
+          driverMovement:
+            data.driverMovement && typeof data.driverMovement === 'object'
+              ? (data.driverMovement as Record<string, number>)
+              : {},
+        }
+      })
+      .sort((a, b) => a.round - b.round)
+
+    return {
+      source: {
+        schedule: racesResult.source,
+        drivers: driversResult.source,
+        constructors: constructorsResult.source,
+        results: 'firestore',
+      },
+      seasonId,
+      seasonName,
+      seasonYear,
+      races: racesResult.races,
+      results,
+      drivers: driversResult.drivers,
+      constructors: constructorsResult.constructors,
+      scoringRules: {
+        podiumPoints: scoringRules.podiumPoints,
+        driverGain: scoringRules.standingsMovement.driverGain,
+        dnfPenalty: scoringRules.dnfPenalty,
+      },
     }
   },
 )

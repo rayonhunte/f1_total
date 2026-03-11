@@ -9,6 +9,8 @@ import { getTeamBrand } from '../lib/branding'
 import { db, functions } from '../lib/firebase'
 import { resolveSeasonForClient } from '../lib/season'
 
+type RaceStatus = 'scheduled' | 'in_progress' | 'completed' | 'results_ingested'
+
 type CurrentPickSummary = {
   seasonId: string
   raceId: string
@@ -54,30 +56,50 @@ async function fetchTargetRace(seasonId: string): Promise<{ id: string; name: st
     .map((raceDoc) => {
       const data = raceDoc.data()
       const rawRaceStart = data.raceStartAt
+      const rawLockAt = data.lockAt
       const raceStartAt = rawRaceStart
         ? typeof rawRaceStart.toDate === 'function'
           ? rawRaceStart.toDate()
           : new Date(String(rawRaceStart))
         : undefined
+      const lockAt = rawLockAt
+        ? typeof rawLockAt.toDate === 'function'
+          ? rawLockAt.toDate()
+          : new Date(String(rawLockAt))
+        : undefined
+      const rawStatus = (data.status as string | undefined) ?? 'scheduled'
+      const status: RaceStatus =
+        rawStatus === 'completed' || rawStatus === 'in_progress' || rawStatus === 'results_ingested'
+          ? rawStatus
+          : 'scheduled'
 
       return {
-        id: raceDoc.id,
-        name: (data.name as string | undefined) ?? raceDoc.id,
+        seasonId,
+        raceId: raceDoc.id,
+        raceName: (data.name as string | undefined) ?? raceDoc.id,
         round: Number(data.round ?? 0),
         raceStartAt,
-      }
+        lockAt,
+        status,
+      } satisfies DashboardRaceSummary
     })
     .sort((a, b) => a.round - b.round)
 
-  const upcoming = races.find((race) => (race.raceStartAt ? race.raceStartAt >= now : false))
-  return upcoming ?? races[races.length - 1]
+  const nextOpenRace = races.find((race) => {
+    if (race.status === 'completed' || race.status === 'results_ingested') return false
+    const effectiveLockAt = race.lockAt ?? race.raceStartAt
+    return !effectiveLockAt || effectiveLockAt >= now
+  })
+  const nextIncompleteRace = races.find((race) => race.status !== 'completed' && race.status !== 'results_ingested')
+
+  return nextOpenRace ?? nextIncompleteRace ?? races[races.length - 1]
 }
 
 async function fetchCurrentPick(uid: string, groupId: string): Promise<CurrentPickSummary | null> {
   const season = await resolveSeasonForClient()
   const seasonId = season.id
   const race = await fetchTargetRace(seasonId)
-  const pickId = `${seasonId}_${race.id}_${groupId}_${uid}`
+  const pickId = `${seasonId}_${race.raceId}_${groupId}_${uid}`
 
   const pickSnap = await getDoc(doc(db, 'picks', pickId))
   if (!pickSnap.exists()) return null
@@ -92,8 +114,8 @@ async function fetchCurrentPick(uid: string, groupId: string): Promise<CurrentPi
 
   return {
     seasonId,
-    raceId: race.id,
-    raceName: race.name,
+    raceId: race.raceId,
+    raceName: race.raceName,
     podium: {
       p1: (data.podium?.p1 as string | undefined) ?? '-',
       p2: (data.podium?.p2 as string | undefined) ?? '-',
@@ -144,10 +166,19 @@ async function fetchDashboardGroupOverview(groupId: string): Promise<DashboardGr
 }
 
 export function DashboardPage() {
-  const { profile, groups, activeGroupId, user } = useAuth()
+  const { groups, activeGroupId, user } = useAuth()
   const [notificationNotice, setNotificationNotice] = useState<string | null>(null)
   const activeGroup = groups.find((group) => group.id === activeGroupId)
   const activeGroupLabel = activeGroup?.name ?? activeGroupId ?? 'No active group selected'
+
+  const targetRaceQuery = useQuery({
+    queryKey: ['dashboard-target-race'],
+    queryFn: async () => {
+      const season = await resolveSeasonForClient()
+      return fetchTargetRace(season.id)
+    },
+    enabled: Boolean(activeGroupId),
+  })
 
   const currentPickQuery = useQuery({
     queryKey: ['dashboard-current-pick', user?.uid, activeGroupId],
@@ -185,7 +216,7 @@ export function DashboardPage() {
           }
         })
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-        .slice(0, 8)
+        .slice(0, 6)
     },
     enabled: Boolean(user?.uid),
     refetchInterval: 60_000,
@@ -209,27 +240,42 @@ export function DashboardPage() {
     setNotificationNotice('Notification preferences updated.')
   }
 
+  const targetRace = targetRaceQuery.data ?? null
+  const raceState = getRaceState(targetRace)
+  const activeMembersCount = groupOverviewQuery.data?.members.filter((member) => member.status === 'active').length ?? 0
+  const currentStanding = groupOverviewQuery.data?.standings.find((entry) => entry.uid === user?.uid) ?? null
+  const now = new Date()
+  const countdown = formatCountdown(targetRace?.lockAt ?? targetRace?.raceStartAt, now)
+
   return (
-    <section>
-      <h2>Dashboard</h2>
-      <p>Welcome back, {profile?.displayName ?? 'F1 Player'}.</p>
-      <p>Current league group: {activeGroupLabel}.</p>
-      <p>Track your total points, current rank, and next race lock deadline.</p>
+    <section className="dashboard-page">
+      <div className="dashboard-hero-row">
+        <div>
+          <p className="dashboard-eyebrow">Race Week Snapshot</p>
+          <h2>Dashboard</h2>
+          <p className="dashboard-intro">
+            Monitor your group, the next lock deadline, live standings, and your current picks from one command surface.
+          </p>
+        </div>
 
-      <div className="dashboard-card">
-        <h3>My Current Picks</h3>
+        <div className="dashboard-hero-actions">
+          <span className="user-pill dashboard-group-pill">
+            <span>Group</span>
+            <strong>{activeGroupLabel}</strong>
+          </span>
+          <Link to="/app/picks" className="landing-btn primary dashboard-cta-link">
+            Edit Picks
+          </Link>
+        </div>
+      </div>
 
-        {currentPickQuery.isLoading ? <p>Loading your picks...</p> : null}
-
-        {currentPickQuery.isError ? (
-          <p className="validation-error">{(currentPickQuery.error as Error).message}</p>
+      <div className="dashboard-spotlight">
+        {targetRaceQuery.isLoading ? <p>Loading next race...</p> : null}
+        {targetRaceQuery.isError ? (
+          <p className="validation-error">{(targetRaceQuery.error as Error).message}</p>
         ) : null}
 
-        {!currentPickQuery.isLoading && !currentPickQuery.isError && !currentPickQuery.data ? (
-          <p>No saved pick yet for your current race and group.</p>
-        ) : null}
-
-        {currentPickQuery.data ? (
+        {targetRace ? (
           <>
             <p>
               Race: <strong><CountryFlag raceName={currentPickQuery.data.raceName} size="sm" /> {currentPickQuery.data.raceName}</strong>
@@ -239,13 +285,25 @@ export function DashboardPage() {
                 <span>P1</span>
                 <strong>{currentPickQuery.data.podium.p1}</strong>
               </div>
-              <div>
-                <span>P2</span>
-                <strong>{currentPickQuery.data.podium.p2}</strong>
+
+              <div className="dashboard-countdown-block">
+                <span className="dashboard-countdown-label">Next lock</span>
+                <strong className="dashboard-countdown-value">{countdown}</strong>
               </div>
-              <div>
-                <span>P3</span>
-                <strong>{currentPickQuery.data.podium.p3}</strong>
+            </div>
+
+            <div className="dashboard-stat-strip">
+              <div className="dashboard-stat-card">
+                <span>Status</span>
+                <strong>{raceState}</strong>
+              </div>
+              <div className="dashboard-stat-card">
+                <span>Your rank</span>
+                <strong>{currentStanding ? `#${currentStanding.rank}` : '—'}</strong>
+              </div>
+              <div className="dashboard-stat-card">
+                <span>Active members</span>
+                <strong>{activeMembersCount || '—'}</strong>
               </div>
             </div>
             <p>
@@ -273,10 +331,6 @@ export function DashboardPage() {
             </p>
           </>
         ) : null}
-
-        <Link to="/app/picks" className="secondary-btn card-link-btn">
-          Edit Picks
-        </Link>
       </div>
 
       <div className="dashboard-card">
