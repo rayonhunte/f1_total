@@ -868,6 +868,129 @@ button:focus-visible {
   margin-top: 0.5rem;
 }
 
+.messages-shell {
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.messages-list-wrap {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 280px;
+}
+
+.messages-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.messages-empty {
+  color: var(--muted);
+  margin: 0;
+}
+
+.message-card {
+  display: block;
+  margin-bottom: 0.75rem;
+  padding: 0.6rem 0.7rem;
+}
+
+.message-card-system {
+  border-left: 3px solid var(--muted);
+  opacity: 0.95;
+}
+
+.message-system-label {
+  font-weight: 700;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.message-system-text {
+  margin-left: 0.35rem;
+}
+
+.message-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.message-author-block {
+  min-width: 0;
+}
+
+.message-edited-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-left: 0.35rem;
+}
+
+.message-actions,
+.message-edit-actions,
+.messages-composer-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.message-text {
+  margin: 0.3rem 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message-edit-block {
+  margin-top: 0.5rem;
+}
+
+.message-edit-textarea,
+.messages-composer {
+  width: 100%;
+  max-width: 100%;
+  resize: vertical;
+}
+
+.message-edit-textarea {
+  margin-bottom: 0.35rem;
+}
+
+.messages-composer-wrap {
+  position: relative;
+}
+
+.messages-composer-label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-weight: 600;
+}
+
+.message-mentions {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: 0.25rem;
+  max-height: 160px;
+  overflow-y: auto;
+  list-style: none;
+  padding: 0.35rem;
+  z-index: 10;
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  box-shadow: var(--shadow);
+}
+
+.mention-option-btn {
+  width: 100%;
+  text-align: left;
+}
+
 .landing-page,
 .login-page {
   min-height: 100vh;
@@ -1076,6 +1199,25 @@ button:focus-visible {
   .podium-grid,
   .constructor-grid {
     grid-template-columns: 1fr;
+  }
+
+  .messages-shell {
+    max-height: none;
+  }
+
+  .messages-list-wrap {
+    min-height: 220px;
+  }
+
+  .message-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .message-actions button,
+  .message-edit-actions button,
+  .messages-composer-actions button {
+    width: 100%;
   }
 
   input,
