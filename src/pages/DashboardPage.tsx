@@ -11,16 +11,6 @@ import { resolveSeasonForClient } from '../lib/season'
 
 type RaceStatus = 'scheduled' | 'in_progress' | 'completed' | 'results_ingested'
 
-type DashboardRaceSummary = {
-  seasonId: string
-  raceId: string
-  raceName: string
-  round: number
-  raceStartAt?: Date
-  lockAt?: Date
-  status: RaceStatus
-}
-
 type CurrentPickSummary = {
   seasonId: string
   raceId: string
@@ -280,7 +270,6 @@ export function DashboardPage() {
   }
 
   const targetRace = targetRaceQuery.data ?? null
-  const currentPick = currentPickQuery.data ?? null
   const raceState = getRaceState(targetRace)
   const activeMembersCount = groupOverviewQuery.data?.members.filter((member) => member.status === 'active').length ?? 0
   const currentStanding = groupOverviewQuery.data?.standings.find((entry) => entry.uid === user?.uid) ?? null
