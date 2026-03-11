@@ -1343,12 +1343,8 @@ export const importSeasonSchedule = onCall(
         skippedCompleted += 1
         await raceRef.set(
           {
-            seasonId: requestedSeasonId,
-            seasonYear: requestedSeasonYear,
-            round: scheduledRace.round,
-            name: scheduledRace.raceName,
+            ...basePayload,
             status: 'completed',
-            updatedAt: FieldValue.serverTimestamp(),
           },
           { merge: true },
         )
