@@ -670,6 +670,9 @@ button:focus-visible {
   font-weight: 700;
   font-size: 0.8rem;
   color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 .race-chip-name {
@@ -712,6 +715,60 @@ button:focus-visible {
   align-items: center;
   gap: 0.5rem;
   font-weight: 500;
+}
+
+.constructor-chip span,
+.brand-inline-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.brand-inline-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  vertical-align: middle;
+}
+
+.team-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  background: var(--team-bg);
+  color: var(--team-fg);
+  box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--team-ring) 70%, transparent);
+}
+
+.team-logo-sm {
+  width: 1.2rem;
+  height: 1.2rem;
+  font-size: 0.55rem;
+}
+
+.team-logo-md {
+  width: 1.55rem;
+  height: 1.55rem;
+  font-size: 0.68rem;
+}
+
+.country-flag {
+  display: inline-block;
+  line-height: 1;
+  vertical-align: -0.08em;
+}
+
+.country-flag-sm {
+  font-size: 0.95rem;
+}
+
+.country-flag-md {
+  font-size: 1.05rem;
 }
 
 .constructor-chip.selected {
