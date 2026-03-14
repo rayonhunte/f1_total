@@ -1582,116 +1582,127 @@ export const syncSeasonTimezones = onCall(
     region: 'us-central1',
   },
   async (request): Promise<SyncSeasonTimezonesResponse> => {
-    if (!request.auth) {
-      throw new HttpsError('unauthenticated', 'Authentication is required.')
-    }
+    try {
+      if (!request.auth) {
+        throw new HttpsError('unauthenticated', 'Authentication is required.')
+      }
 
-    await assertSeasonAdminAccess(request.auth.uid, request.auth.token.role === 'admin')
+      await assertSeasonAdminAccess(request.auth.uid, request.auth.token.role === 'admin')
 
-    const data = (request.data ?? {}) as SyncSeasonTimezonesRequest
-    const seasonId = data.seasonId?.trim() || (await findActiveSeasonId())
-    const seasonSnap = await db.collection('seasons').doc(seasonId).get()
+      const data = (request.data ?? {}) as SyncSeasonTimezonesRequest
+      const seasonId = data.seasonId?.trim() || (await findActiveSeasonId())
+      const seasonSnap = await db.collection('seasons').doc(seasonId).get()
 
-    if (!seasonSnap.exists) {
-      throw new HttpsError('not-found', `Season ${seasonId} not found.`)
-    }
+      if (!seasonSnap.exists) {
+        throw new HttpsError('not-found', `Season ${seasonId} not found.`)
+      }
 
-    const seasonData = seasonSnap.data() as Partial<SeasonDoc>
-    const seasonYear = Number(seasonData.year ?? new Date().getUTCFullYear())
-    if (!Number.isFinite(seasonYear) || seasonYear < 1950 || seasonYear > 2100) {
-      throw new HttpsError('invalid-argument', 'seasonYear must be between 1950 and 2100.')
-    }
+      const seasonData = seasonSnap.data() as Partial<SeasonDoc>
+      const seasonYear = Number(seasonData.year ?? new Date().getUTCFullYear())
+      if (!Number.isFinite(seasonYear) || seasonYear < 1950 || seasonYear > 2100) {
+        throw new HttpsError('invalid-argument', 'seasonYear must be between 1950 and 2100.')
+      }
 
-    const schedule = await fetchSeasonSchedule(seasonYear)
-    if (schedule.length === 0) {
-      throw new HttpsError('not-found', `No races returned from Jolpi for season ${seasonYear}.`)
-    }
+      const schedule = await fetchSeasonSchedule(seasonYear)
+      if (schedule.length === 0) {
+        throw new HttpsError('not-found', `No races returned from Jolpi for season ${seasonYear}.`)
+      }
 
-    const racesSnap = await db.collection('races').where('seasonId', '==', seasonId).get()
-    const raceById = new Map(racesSnap.docs.map((doc) => [doc.id, doc]))
+      const racesSnap = await db.collection('races').where('seasonId', '==', seasonId).get()
+      const raceById = new Map(racesSnap.docs.map((doc) => [doc.id, doc]))
 
-    let updated = 0
-    let skipped = 0
+      let updated = 0
+      let skipped = 0
 
-    const results: SyncSeasonTimezonesResponse['races'] = []
-    const dryRun = data.dryRun === true
-    const force = data.force === true
+      const results: SyncSeasonTimezonesResponse['races'] = []
+      const dryRun = data.dryRun === true
+      const force = data.force === true
 
-    for (const scheduledRace of schedule) {
-      const raceId = `${seasonId}_r${scheduledRace.round}`
-      const raceDoc = raceById.get(raceId)
-      const circuitTimezone = resolveCircuitTimezone(scheduledRace.latitude, scheduledRace.longitude)
+      for (const scheduledRace of schedule) {
+        const raceId = `${seasonId}_r${scheduledRace.round}`
+        const raceDoc = raceById.get(raceId)
+        const circuitTimezone = resolveCircuitTimezone(scheduledRace.latitude, scheduledRace.longitude)
 
-      const raceStartAt = scheduledRace.raceStartAt ? new Date(scheduledRace.raceStartAt) : null
-      const existing = raceDoc?.data() as Partial<RaceDoc> | undefined
-      const existingStart = timestampToDate(existing?.raceStartAt)
-      const effectiveStart = existingStart ?? raceStartAt
-      const computedLockAt = effectiveStart ?? null
+        const raceStartAt = scheduledRace.raceStartAt ? new Date(scheduledRace.raceStartAt) : null
+        const existing = raceDoc?.data() as Partial<RaceDoc> | undefined
+        const existingStart = timestampToDate(existing?.raceStartAt)
+        const effectiveStart = existingStart ?? raceStartAt
+        const computedLockAt = effectiveStart ?? null
 
-      if (!raceDoc) {
-        skipped += 1
+        if (!raceDoc) {
+          skipped += 1
+          results.push({
+            raceId,
+            raceName: scheduledRace.raceName,
+            round: scheduledRace.round,
+            circuitTimezone,
+            raceStartAt: effectiveStart?.toISOString(),
+            lockAt: computedLockAt?.toISOString(),
+          })
+          continue
+        }
+
+        const shouldUpdateTimezone = force || !existing?.circuitTimezone
+        const shouldUpdateLock = force || !existing?.lockAt
+
+        if (!shouldUpdateTimezone && !shouldUpdateLock) {
+          skipped += 1
+          results.push({
+            raceId,
+            raceName: scheduledRace.raceName,
+            round: scheduledRace.round,
+            circuitTimezone: existing?.circuitTimezone,
+            raceStartAt: effectiveStart?.toISOString(),
+            lockAt: computedLockAt?.toISOString(),
+          })
+          continue
+        }
+
+        if (!dryRun) {
+          const payload: Record<string, unknown> = {
+            updatedAt: FieldValue.serverTimestamp(),
+          }
+          if (shouldUpdateTimezone && circuitTimezone) {
+            payload.circuitTimezone = circuitTimezone
+          }
+          if (shouldUpdateLock && computedLockAt) {
+            payload.lockAt = Timestamp.fromDate(computedLockAt)
+          }
+          if (!existing?.raceStartAt && effectiveStart) {
+            payload.raceStartAt = Timestamp.fromDate(effectiveStart)
+          }
+
+          await raceDoc.ref.set(payload, { merge: true })
+        }
+
+        updated += 1
         results.push({
           raceId,
           raceName: scheduledRace.raceName,
           round: scheduledRace.round,
-          circuitTimezone,
+          circuitTimezone: circuitTimezone ?? existing?.circuitTimezone,
           raceStartAt: effectiveStart?.toISOString(),
           lockAt: computedLockAt?.toISOString(),
         })
-        continue
       }
 
-      const shouldUpdateTimezone = force || !existing?.circuitTimezone
-      const shouldUpdateLock = force || !existing?.lockAt
-
-      if (!shouldUpdateTimezone && !shouldUpdateLock) {
-        skipped += 1
-        results.push({
-          raceId,
-          raceName: scheduledRace.raceName,
-          round: scheduledRace.round,
-          circuitTimezone: existing?.circuitTimezone,
-          raceStartAt: effectiveStart?.toISOString(),
-          lockAt: computedLockAt?.toISOString(),
-        })
-        continue
+      return {
+        seasonId,
+        seasonYear,
+        totalFromApi: schedule.length,
+        updated,
+        skipped,
+        races: results,
       }
-
-      if (!dryRun) {
-        const payload: Record<string, unknown> = {
-          updatedAt: FieldValue.serverTimestamp(),
-        }
-        if (shouldUpdateTimezone && circuitTimezone) {
-          payload.circuitTimezone = circuitTimezone
-        }
-        if (shouldUpdateLock && computedLockAt) {
-          payload.lockAt = Timestamp.fromDate(computedLockAt)
-        }
-        if (!existing?.raceStartAt && effectiveStart) {
-          payload.raceStartAt = Timestamp.fromDate(effectiveStart)
-        }
-
-        await raceDoc.ref.set(payload, { merge: true })
+    } catch (error) {
+      logger.error('syncSeasonTimezones failed', { error: String(error) })
+      if (error instanceof HttpsError) {
+        throw error
       }
-
-      updated += 1
-      results.push({
-        raceId,
-        raceName: scheduledRace.raceName,
-        round: scheduledRace.round,
-        circuitTimezone: circuitTimezone ?? existing?.circuitTimezone,
-        raceStartAt: effectiveStart?.toISOString(),
-        lockAt: computedLockAt?.toISOString(),
-      })
-    }
-
-    return {
-      seasonId,
-      seasonYear,
-      totalFromApi: schedule.length,
-      updated,
-      skipped,
-      races: results,
+      throw new HttpsError(
+        'internal',
+        error instanceof Error ? error.message : 'Failed to sync season timezones.',
+      )
     }
   },
 )
