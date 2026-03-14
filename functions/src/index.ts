@@ -1715,9 +1715,7 @@ export const updateRaceCircuitTimezone = onCall(
     if (!request.auth) {
       throw new HttpsError('unauthenticated', 'Authentication is required.')
     }
-    if (request.auth.token.role !== 'admin') {
-      throw new HttpsError('permission-denied', 'Admin role is required.')
-    }
+    await assertSeasonAdminAccess(request.auth.uid, request.auth.token.role === 'admin')
 
     const data = (request.data ?? {}) as UpdateRaceCircuitTimezoneRequest
     const raceId = data.raceId?.trim()
