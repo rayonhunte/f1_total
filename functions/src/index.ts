@@ -313,15 +313,6 @@ async function assertSeasonAdminAccess(uid: string, isAdmin: boolean): Promise<v
   })
 
   if (!hasAdminMembership) {
-    // Fallback for legacy member docs that do not store uid in the document body.
-    const legacySnapshot = await db
-      .collectionGroup('members')
-      .where('status', '==', 'active')
-      .where('role', 'in', ['owner', 'admin'])
-      .get()
-    const legacyMatch = legacySnapshot.docs.some((doc) => doc.id === uid)
-    if (legacyMatch) return
-
     throw new HttpsError('permission-denied', 'Only group admins/owners or platform admins can manage seasons.')
   }
 }
