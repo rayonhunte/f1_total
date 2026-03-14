@@ -29,6 +29,8 @@ type RaceTable = {
         circuitId?: string
         circuitName?: string
         Location?: {
+          lat?: string
+          long?: string
           locality?: string
           country?: string
         }
@@ -110,6 +112,8 @@ export type SeasonRaceSchedule = {
   raceStartAt?: string
   circuitId?: string
   circuitName?: string
+  latitude?: number
+  longitude?: number
   locality?: string
   country?: string
 }
@@ -148,10 +152,17 @@ export async function fetchSeasonSchedule(seasonYear: number): Promise<SeasonRac
         raceStartAt,
         circuitId: race.Circuit?.circuitId,
         circuitName: race.Circuit?.circuitName,
+        latitude: Number(race.Circuit?.Location?.lat ?? NaN),
+        longitude: Number(race.Circuit?.Location?.long ?? NaN),
         locality: race.Circuit?.Location?.locality,
         country: race.Circuit?.Location?.country,
       } satisfies SeasonRaceSchedule
     })
+    .map((race) => ({
+      ...race,
+      latitude: Number.isFinite(race.latitude) ? race.latitude : undefined,
+      longitude: Number.isFinite(race.longitude) ? race.longitude : undefined,
+    }))
     .filter((race) => Number.isInteger(race.round) && race.round > 0 && Boolean(race.raceName))
     .sort((a, b) => a.round - b.round)
 }
