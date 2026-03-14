@@ -53,6 +53,22 @@ type ImportSeasonScheduleResponse = {
   skippedCompleted: number
 }
 
+type SyncSeasonTimezonesResponse = {
+  seasonId: string
+  seasonYear: number
+  totalFromApi: number
+  updated: number
+  skipped: number
+  races: Array<{
+    raceId: string
+    raceName: string
+    round: number
+    circuitTimezone?: string
+    raceStartAt?: string
+    lockAt?: string
+  }>
+}
+
 type InitializeSeasonRequest = {
   seasonId: string
   seasonName: string
@@ -482,6 +498,8 @@ export function AdminPage() {
   const [raceTimezoneValue, setRaceTimezoneValue] = useState('')
   const [scoringRulesForm, setScoringRulesForm] = useState<ScoringRulesForm>(DEFAULT_SCORING_RULES)
   const [scheduleImportNotice, setScheduleImportNotice] = useState<string | null>(null)
+  const [timezoneSyncNotice, setTimezoneSyncNotice] = useState<string | null>(null)
+  const [timezoneSyncResult, setTimezoneSyncResult] = useState<SyncSeasonTimezonesResponse | null>(null)
   const [scoringNotice, setScoringNotice] = useState<string | null>(null)
   const [groupSyncNotice, setGroupSyncNotice] = useState<string | null>(null)
   const [raceSyncNotice, setRaceSyncNotice] = useState<string | null>(null)
@@ -670,6 +688,45 @@ export function AdminPage() {
     onError: (error) => {
       setScheduleImportNotice(null)
       setActionError(error instanceof Error ? error.message : 'Failed to import season schedule.')
+    },
+  })
+
+  const timezoneSyncMutation = useMutation({
+    mutationFn: async () => {
+      const selectedSeasonId = preseasonQuery.data?.selectedSeasonId
+      if (!selectedSeasonId) {
+        throw new Error('No season selected to sync timezones.')
+      }
+
+      const callable = httpsCallable<
+        { seasonId: string; dryRun?: boolean; force?: boolean },
+        SyncSeasonTimezonesResponse
+      >(functions, 'syncSeasonTimezones')
+
+      const response = await callable({
+        seasonId: selectedSeasonId,
+        dryRun: false,
+        force: false,
+      })
+
+      return response.data
+    },
+    onSuccess: async (result) => {
+      setActionError(null)
+      setTimezoneSyncResult(result)
+      setTimezoneSyncNotice(
+        `Synced timezones for ${result.seasonId}. Updated ${result.updated} races, skipped ${result.skipped}.`,
+      )
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['preseason-status'] }),
+        queryClient.invalidateQueries({ queryKey: ['admin-races', result.seasonId] }),
+        queryClient.invalidateQueries({ queryKey: ['picks-bootstrap'] }),
+        queryClient.invalidateQueries({ queryKey: ['dashboard-current-pick'] }),
+      ])
+    },
+    onError: (error) => {
+      setTimezoneSyncNotice(null)
+      setActionError(error instanceof Error ? error.message : 'Failed to sync race timezones.')
     },
   })
 
@@ -1081,6 +1138,40 @@ export function AdminPage() {
                 {scheduleImportMutation.isPending ? 'Importing schedule...' : 'Import Season Schedule'}
               </button>
               {scheduleImportNotice ? <p className="notice-text">{scheduleImportNotice}</p> : null}
+            </div>
+
+            <div className="admin-card">
+              <h3>Sync race timezones</h3>
+              <p>Pull the full season schedule and attach circuit timezones to each race.</p>
+              <p>Lock times are set from race start timestamps when missing.</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setActionError(null)
+                  setTimezoneSyncNotice(null)
+                  setTimezoneSyncResult(null)
+                  timezoneSyncMutation.mutate()
+                }}
+                disabled={timezoneSyncMutation.isPending || !preseasonQuery.data?.selectedSeasonId}
+              >
+                {timezoneSyncMutation.isPending ? 'Syncing timezones...' : 'Sync Race Timezones'}
+              </button>
+              {timezoneSyncNotice ? <p className="notice-text">{timezoneSyncNotice}</p> : null}
+              {timezoneSyncResult ? (
+                <div className="admin-card admin-race-results">
+                  <h4>Race timezones</h4>
+                  <ul className="race-score-list">
+                    {timezoneSyncResult.races.map((race) => (
+                      <li key={race.raceId}>
+                        <span>
+                          R{race.round} {race.raceName}
+                        </span>
+                        <strong>{race.circuitTimezone || 'Unknown'}</strong>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </div>
 
             <div className="admin-card">
