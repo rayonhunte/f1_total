@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase-admin/app'
-import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore'
+import { FieldPath, FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore'
 import { logger } from 'firebase-functions'
 import { HttpsError, onCall } from 'firebase-functions/v2/https'
 import { onSchedule } from 'firebase-functions/v2/scheduler'
@@ -295,6 +295,25 @@ async function assertSeasonSetupAccess(uid: string, isAdmin: boolean): Promise<v
   const ownedGroupsSnapshot = await db.collection('groups').where('ownerUid', '==', uid).limit(1).get()
   if (ownedGroupsSnapshot.empty) {
     throw new HttpsError('permission-denied', 'Only group owners or platform admins can initialize seasons.')
+  }
+}
+
+async function assertSeasonAdminAccess(uid: string, isAdmin: boolean): Promise<void> {
+  if (isAdmin) return
+
+  const ownedGroupsSnapshot = await db.collection('groups').where('ownerUid', '==', uid).limit(1).get()
+  if (!ownedGroupsSnapshot.empty) return
+
+  const adminMemberSnapshot = await db
+    .collectionGroup('members')
+    .where(FieldPath.documentId(), '==', uid)
+    .where('status', '==', 'active')
+    .where('role', 'in', ['owner', 'admin'])
+    .limit(1)
+    .get()
+
+  if (adminMemberSnapshot.empty) {
+    throw new HttpsError('permission-denied', 'Only group admins/owners or platform admins can manage seasons.')
   }
 }
 
@@ -1567,9 +1586,7 @@ export const syncSeasonTimezones = onCall(
       throw new HttpsError('unauthenticated', 'Authentication is required.')
     }
 
-    if (request.auth.token.role !== 'admin') {
-      throw new HttpsError('permission-denied', 'Admin role is required.')
-    }
+    await assertSeasonAdminAccess(request.auth.uid, request.auth.token.role === 'admin')
 
     const data = (request.data ?? {}) as SyncSeasonTimezonesRequest
     const seasonId = data.seasonId?.trim() || (await findActiveSeasonId())
