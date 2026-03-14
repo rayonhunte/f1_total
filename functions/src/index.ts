@@ -312,9 +312,20 @@ async function assertSeasonAdminAccess(uid: string, isAdmin: boolean): Promise<v
     return status === 'active' && (role === 'owner' || role === 'admin')
   })
 
-  if (!hasAdminMembership) {
-    throw new HttpsError('permission-denied', 'Only group admins/owners or platform admins can manage seasons.')
+  if (hasAdminMembership) return
+
+  // Fallback for legacy member docs that do not store uid in the document body.
+  const allGroupsSnapshot = await db.collection('groups').get()
+  for (const groupDoc of allGroupsSnapshot.docs) {
+    const memberDoc = await groupDoc.ref.collection('members').doc(uid).get()
+    if (!memberDoc.exists) continue
+    const data = memberDoc.data() ?? {}
+    const status = String(data.status ?? 'pending')
+    const role = String(data.role ?? 'member')
+    if (status === 'active' && (role === 'owner' || role === 'admin')) return
   }
+
+  throw new HttpsError('permission-denied', 'Only group admins/owners or platform admins can manage seasons.')
 }
 
 function resolveRaceStatusForImport(raceStartAt: Date | null, hasResults: boolean): RaceDoc['status'] {
