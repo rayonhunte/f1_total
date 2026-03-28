@@ -261,6 +261,16 @@ function timestampToDate(value: unknown): Date | null {
   return null
 }
 
+function parseOptionalIsoDate(value?: string): Date | null {
+  if (!value) return null
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function sameInstant(left: Date | null, right: Date | null) {
+  return Boolean(left && right && left.getTime() === right.getTime())
+}
+
 function normalizeSeasonId(rawId: string | undefined, year: number): string {
   const fallback = String(year)
   const source = (rawId ?? fallback).trim().toLowerCase()
@@ -304,17 +314,6 @@ async function assertSeasonAdminAccess(uid: string, isAdmin: boolean): Promise<v
   const ownedGroupsSnapshot = await db.collection('groups').where('ownerUid', '==', uid).limit(1).get()
   if (!ownedGroupsSnapshot.empty) return
 
-  const adminMemberSnapshot = await db.collectionGroup('members').where('uid', '==', uid).limit(10).get()
-  const hasAdminMembership = adminMemberSnapshot.docs.some((doc) => {
-    const data = doc.data() ?? {}
-    const status = String(data.status ?? 'pending')
-    const role = String(data.role ?? 'member')
-    return status === 'active' && (role === 'owner' || role === 'admin')
-  })
-
-  if (hasAdminMembership) return
-
-  // Fallback for legacy member docs that do not store uid in the document body.
   const allGroupsSnapshot = await db.collection('groups').get()
   for (const groupDoc of allGroupsSnapshot.docs) {
     const memberDoc = await groupDoc.ref.collection('members').doc(uid).get()
@@ -1527,6 +1526,7 @@ export const importSeasonSchedule = onCall(
       const hasResults = resultByRaceId.get(raceId) === true
       const raceStart = scheduledRace.raceStartAt ? new Date(scheduledRace.raceStartAt) : null
       const validRaceStart = raceStart && !Number.isNaN(raceStart.getTime()) ? raceStart : null
+      const scheduleLockAt = parseOptionalIsoDate(scheduledRace.lockAt) ?? validRaceStart
       const importedStatus = resolveRaceStatusForImport(validRaceStart, hasResults)
 
       const basePayload = {
@@ -1534,7 +1534,8 @@ export const importSeasonSchedule = onCall(
         seasonYear: requestedSeasonYear,
         round: scheduledRace.round,
         name: scheduledRace.raceName,
-        ...(validRaceStart ? { raceStartAt: Timestamp.fromDate(validRaceStart), lockAt: Timestamp.fromDate(validRaceStart) } : {}),
+        ...(validRaceStart ? { raceStartAt: Timestamp.fromDate(validRaceStart) } : {}),
+        ...(scheduleLockAt ? { lockAt: Timestamp.fromDate(scheduleLockAt) } : {}),
         updatedAt: FieldValue.serverTimestamp(),
       }
 
@@ -1635,10 +1636,12 @@ export const syncSeasonTimezones = onCall(
         const circuitTimezone = resolveCircuitTimezone(scheduledRace.latitude, scheduledRace.longitude)
 
         const raceStartAt = scheduledRace.raceStartAt ? new Date(scheduledRace.raceStartAt) : null
+        const scheduleLockAt = parseOptionalIsoDate(scheduledRace.lockAt) ?? raceStartAt
         const existing = raceDoc?.data() as Partial<RaceDoc> | undefined
         const existingStart = timestampToDate(existing?.raceStartAt)
+        const existingLockAt = timestampToDate(existing?.lockAt)
         const effectiveStart = existingStart ?? raceStartAt
-        const computedLockAt = effectiveStart ?? null
+        const computedLockAt = scheduleLockAt ?? effectiveStart ?? null
 
         if (!raceDoc) {
           skipped += 1
@@ -1654,7 +1657,16 @@ export const syncSeasonTimezones = onCall(
         }
 
         const shouldUpdateTimezone = force || !existing?.circuitTimezone
-        const shouldUpdateLock = force || !existing?.lockAt
+        const existingCanonicalRaceStart = existingStart ?? raceStartAt
+        const shouldRepairRaceStartLock =
+          Boolean(
+            computedLockAt &&
+              existingLockAt &&
+              existingCanonicalRaceStart &&
+              sameInstant(existingLockAt, existingCanonicalRaceStart) &&
+              !sameInstant(existingLockAt, computedLockAt),
+          )
+        const shouldUpdateLock = force || !existingLockAt || shouldRepairRaceStartLock
 
         if (!shouldUpdateTimezone && !shouldUpdateLock) {
           skipped += 1

@@ -25,6 +25,30 @@ type RaceTable = {
       raceName: string
       date?: string
       time?: string
+      FirstPractice?: {
+        date?: string
+        time?: string
+      }
+      SecondPractice?: {
+        date?: string
+        time?: string
+      }
+      ThirdPractice?: {
+        date?: string
+        time?: string
+      }
+      Qualifying?: {
+        date?: string
+        time?: string
+      }
+      Sprint?: {
+        date?: string
+        time?: string
+      }
+      SprintQualifying?: {
+        date?: string
+        time?: string
+      }
       Circuit?: {
         circuitId?: string
         circuitName?: string
@@ -110,12 +134,21 @@ export type SeasonRaceSchedule = {
   round: number
   raceName: string
   raceStartAt?: string
+  qualifyingStartAt?: string
+  sprintQualifyingStartAt?: string
+  lockAt?: string
   circuitId?: string
   circuitName?: string
   latitude?: number
   longitude?: number
   locality?: string
   country?: string
+}
+
+function buildSessionStartAt(session?: { date?: string; time?: string }) {
+  const date = typeof session?.date === 'string' ? session.date.trim() : ''
+  const time = typeof session?.time === 'string' ? session.time.trim() : ''
+  return date ? `${date}T${time || '00:00:00Z'}` : undefined
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -141,15 +174,19 @@ export async function fetchSeasonSchedule(seasonYear: number): Promise<SeasonRac
   return (payload.MRData.RaceTable.Races ?? [])
     .map((race) => {
       const round = Number(race.round ?? 0)
-      const date = typeof race.date === 'string' ? race.date.trim() : ''
-      const time = typeof race.time === 'string' ? race.time.trim() : ''
-      const raceStartAt = date ? `${date}T${time || '00:00:00Z'}` : undefined
+      const raceStartAt = buildSessionStartAt(race)
+      const qualifyingStartAt = buildSessionStartAt(race.Qualifying)
+      const sprintQualifyingStartAt = buildSessionStartAt(race.SprintQualifying)
+      const lockAt = sprintQualifyingStartAt ?? qualifyingStartAt ?? raceStartAt
 
       return {
         seasonYear,
         round,
         raceName: race.raceName,
         raceStartAt,
+        qualifyingStartAt,
+        sprintQualifyingStartAt,
+        lockAt,
         circuitId: race.Circuit?.circuitId,
         circuitName: race.Circuit?.circuitName,
         latitude: Number(race.Circuit?.Location?.lat ?? NaN),
